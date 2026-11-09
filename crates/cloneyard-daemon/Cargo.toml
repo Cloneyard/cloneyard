@@ -1,0 +1,24 @@
+[package]
+name = "cloneyard-daemon"
+description = "The Cloneyard daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cloneyard-rpc.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
+
+[lints]
+workspace = true
