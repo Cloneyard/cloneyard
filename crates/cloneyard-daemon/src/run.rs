@@ -17,11 +17,12 @@ pub fn run() -> anyhow::Result<()> {
     let config = Config::load(&paths::config_file()?)?;
     init_logging(&config.log)?;
     let runtime_dir = paths::runtime_dir()?;
+    let data_dir = paths::data_dir()?;
     tokio::runtime::Runtime::new()
         .context("cannot start the tokio runtime")?
         .block_on(async {
             let shutdown = shutdown_signal()?;
-            let daemon = Daemon::bind(&runtime_dir)?;
+            let daemon = Daemon::bind(&runtime_dir, &data_dir).await?;
             daemon.serve(shutdown).await
         })
 }

@@ -22,6 +22,18 @@ fn xdg_dir(variable: &str) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
+/// `$XDG_DATA_HOME/cloneyard`, or `~/.local/share/cloneyard`, which holds the node's database.
+///
+/// # Errors
+///
+/// When neither `XDG_DATA_HOME` nor `HOME` is set.
+pub fn data_dir() -> anyhow::Result<PathBuf> {
+    let data_home = xdg_dir("XDG_DATA_HOME")
+        .or_else(|| env::home_dir().map(|home| home.join(".local").join("share")))
+        .context("neither XDG_DATA_HOME nor HOME is set")?;
+    Ok(data_home.join("cloneyard"))
+}
+
 /// `$XDG_RUNTIME_DIR/cloneyard`, which holds the socket and the lock.
 ///
 /// # Errors
@@ -40,4 +52,12 @@ pub fn socket(runtime_dir: &Path) -> PathBuf {
 
 pub(crate) fn lock(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join("daemon.lock")
+}
+
+pub(crate) fn data_lock(data_dir: &Path) -> PathBuf {
+    data_dir.join("cloneyard.lock")
+}
+
+pub(crate) fn database(data_dir: &Path) -> PathBuf {
+    data_dir.join("cloneyard.db")
 }

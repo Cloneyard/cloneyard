@@ -5,7 +5,7 @@ The `cloneyard` binary and its short alias `cy`: a thin client of the daemon, an
 ## Commands
 
 - `cy daemon` runs the daemon in the foreground until SIGTERM or Ctrl+C.
-- `cy ping` prints the daemon's version and the round-trip time of one call.
+- `cy ping` prints the daemon's version, the node id and the round-trip time of one call.
 
 ## Out of scope
 

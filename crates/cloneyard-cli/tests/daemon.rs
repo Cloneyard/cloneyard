@@ -23,6 +23,7 @@ impl Node {
         cy.arg(subcommand)
             .env("XDG_RUNTIME_DIR", self.home.path())
             .env("XDG_CONFIG_HOME", self.home.path().join("config"))
+            .env("XDG_DATA_HOME", self.home.path().join("data"))
             .env_remove("RUST_LOG");
         cy
     }
@@ -32,8 +33,11 @@ impl Node {
     }
 
     fn start_daemon(&self) -> Daemon {
-        let child = self
-            .cy("daemon")
+        self.spawn(self.cy("daemon"))
+    }
+
+    fn spawn(&self, mut daemon: Command) -> Daemon {
+        let child = daemon
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -83,20 +87,45 @@ fn stderr_of_failure(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).unwrap()
 }
 
+/// The node id in `cloneyard <version>, node <id>, round trip <ms> ms`.
+fn node_id_from_ping(node: &Node) -> String {
+    let output = node.cy("ping").output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let prefix = concat!("cloneyard ", env!("CARGO_PKG_VERSION"), ", node ");
+    let parsed = stdout.strip_prefix(prefix).and_then(|rest| {
+        let (node_id, round_trip) = rest.split_once(", round trip ")?;
+        let milliseconds = round_trip.strip_suffix(" ms\n")?;
+        milliseconds.parse::<f64>().ok()?;
+        Some(node_id.to_owned())
+    });
+    parsed.unwrap_or_else(|| panic!("unexpected output: {stdout:?}"))
+}
+
 #[test]
-fn ping_prints_the_daemon_version_and_round_trip() {
+fn ping_prints_the_daemon_version_node_id_and_round_trip() {
     let node = Node::new();
     let _daemon = node.start_daemon();
 
-    let output = node.cy("ping").output().unwrap();
+    let node_id = node_id_from_ping(&node);
 
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let prefix = concat!("cloneyard ", env!("CARGO_PKG_VERSION"), ", round trip ");
+    assert_eq!(node_id.len(), 26, "{node_id}");
     assert!(
-        stdout.starts_with(prefix) && stdout.ends_with(" ms\n"),
-        "{stdout}"
+        node_id.chars().all(|c| c.is_ascii_alphanumeric()),
+        "{node_id}"
     );
+}
+
+#[test]
+fn the_node_id_survives_a_restart() {
+    let node = Node::new();
+    let daemon = node.start_daemon();
+    let before = node_id_from_ping(&node);
+    assert!(daemon.terminate().success());
+
+    let _daemon = node.start_daemon();
+
+    assert_eq!(node_id_from_ping(&node), before);
 }
 
 #[test]
@@ -191,4 +220,18 @@ fn reads_node_toml_from_home_when_xdg_config_home_is_relative() {
         stderr.contains(&config_dir.join("node.toml").display().to_string()),
         "{stderr}"
     );
+}
+
+#[test]
+fn keeps_the_database_in_home_when_xdg_data_home_is_relative() {
+    let node = Node::new();
+    let mut daemon = node.cy("daemon");
+    daemon
+        .env("HOME", node.home.path())
+        .env("XDG_DATA_HOME", "data");
+
+    let _daemon = node.spawn(daemon);
+
+    let database = node.home.path().join(".local/share/cloneyard/cloneyard.db");
+    assert!(database.exists(), "{}", database.display());
 }
