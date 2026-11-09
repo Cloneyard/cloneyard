@@ -3,7 +3,7 @@ use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations, SchemaVersion};
 
@@ -16,12 +16,19 @@ pub(crate) fn open(path: &Path, migrations: Vec<M<'static>>) -> anyhow::Result<C
         connect(path).with_context(|| format!("cannot open {}", path.display()))?;
     let latest = migrations.len();
     let migrations = Migrations::new(migrations);
-    if let SchemaVersion::Inside(version) = migrations
+    match migrations
         .current_version(&connection)
         .with_context(|| format!("cannot read the schema version of {}", path.display()))?
-        && version.get() < latest
     {
-        back_up(&connection, path, version.get())?;
+        SchemaVersion::Outside(version) => bail!(
+            "database schema v{version} is newer than this cloneyard (v{latest}); \
+             upgrade cloneyard or restore a file from {}",
+            backups_dir(path).display()
+        ),
+        SchemaVersion::Inside(version) if version.get() < latest => {
+            back_up(&connection, path, version.get())?;
+        }
+        SchemaVersion::Inside(_) | SchemaVersion::NoneSet => {}
     }
     migrations
         .to_latest(&mut connection)
@@ -188,6 +195,29 @@ mod tests {
         let backup = Connection::open(&backup).unwrap();
         assert_eq!(pragma::<i64>(&backup, "user_version"), 1);
         assert_eq!(repos(&backup), expected);
+    }
+
+    #[test]
+    fn refuses_a_schema_newer_than_its_migrations_and_leaves_the_file_alone() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cloneyard.db");
+        let mut newer = migrations();
+        newer.push(M::up("ALTER TABLE repo ADD COLUMN default_branch TEXT;"));
+        newer.push(M::up("ALTER TABLE repo ADD COLUMN archived INTEGER;"));
+        drop(open(&path, newer).unwrap());
+
+        let error = open(&path, migrations()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "database schema v3 is newer than this cloneyard (v1); \
+                 upgrade cloneyard or restore a file from {}",
+                dir.path().join("backups").display()
+            )
+        );
+        let connection = Connection::open(&path).unwrap();
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 3);
     }
 
     #[test]
