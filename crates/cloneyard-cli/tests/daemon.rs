@@ -23,6 +23,7 @@ impl Node {
         cy.arg(subcommand)
             .env("XDG_RUNTIME_DIR", self.home.path())
             .env("XDG_CONFIG_HOME", self.home.path().join("config"))
+            .env("XDG_DATA_HOME", self.home.path().join("data"))
             .env_remove("RUST_LOG");
         cy
     }
@@ -32,8 +33,11 @@ impl Node {
     }
 
     fn start_daemon(&self) -> Daemon {
-        let child = self
-            .cy("daemon")
+        self.spawn(self.cy("daemon"))
+    }
+
+    fn spawn(&self, mut daemon: Command) -> Daemon {
+        let child = daemon
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -191,4 +195,18 @@ fn reads_node_toml_from_home_when_xdg_config_home_is_relative() {
         stderr.contains(&config_dir.join("node.toml").display().to_string()),
         "{stderr}"
     );
+}
+
+#[test]
+fn keeps_the_database_in_home_when_xdg_data_home_is_relative() {
+    let node = Node::new();
+    let mut daemon = node.cy("daemon");
+    daemon
+        .env("HOME", node.home.path())
+        .env("XDG_DATA_HOME", "data");
+
+    let _daemon = node.spawn(daemon);
+
+    let database = node.home.path().join(".local/share/cloneyard/cloneyard.db");
+    assert!(database.exists(), "{}", database.display());
 }

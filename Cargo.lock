@@ -170,6 +170,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "cloneyard-rpc",
+ "cloneyard-store",
  "serde",
  "serde_json",
  "tempfile",
