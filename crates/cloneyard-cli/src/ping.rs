@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use cloneyard_daemon::paths;
-use cloneyard_daemon::system::{self, Version};
+use cloneyard_daemon::system::{self, Ping, Version};
 use cloneyard_rpc::Client;
 use tokio::net::UnixStream;
 
@@ -15,7 +15,7 @@ pub(crate) fn run() -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("cannot start the tokio runtime")?;
-    let (version, round_trip) = runtime.block_on(async {
+    let (version, ping, round_trip) = runtime.block_on(async {
         let stream = match UnixStream::connect(&socket).await {
             Ok(stream) => stream,
             Err(error)
@@ -36,15 +36,16 @@ pub(crate) fn run() -> anyhow::Result<()> {
         tokio::time::timeout(TIMEOUT, async {
             let version: Version = client.call(system::VERSION, ()).await?;
             let start = Instant::now();
-            let _: String = client.call(system::PING, ()).await?;
-            anyhow::Ok((version, start.elapsed()))
+            let ping: Ping = client.call(system::PING, ()).await?;
+            anyhow::Ok((version, ping, start.elapsed()))
         })
         .await
         .with_context(|| format!("the daemon did not answer within {} s", TIMEOUT.as_secs()))?
     })?;
     println!(
-        "cloneyard {}, round trip {:.2} ms",
+        "cloneyard {}, node {}, round trip {:.2} ms",
         version.version,
+        ping.node_id,
         round_trip.as_secs_f64() * 1000.0
     );
     Ok(())

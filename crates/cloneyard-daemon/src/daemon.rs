@@ -11,6 +11,7 @@ use anyhow::{Context as _, bail};
 use cloneyard_store::Store;
 use tokio::net::UnixListener;
 use tokio::task::JoinSet;
+use ulid::Ulid;
 
 use crate::{paths, system};
 
@@ -18,6 +19,7 @@ use crate::{paths, system};
 pub struct Daemon {
     listener: UnixListener,
     socket: PathBuf,
+    node_id: Ulid,
     store: Store,
     data_lock: File,
     runtime_lock: File,
@@ -41,6 +43,7 @@ impl Daemon {
             bail!("another cloneyard daemon is using {}", data_dir.display());
         };
         let store = Store::open(&paths::database(data_dir)).await?;
+        let node_id = store.node_id().await?;
 
         // Only the lock holder gets here, so a socket left on disk is stale.
         match fs::remove_file(&socket) {
@@ -55,6 +58,7 @@ impl Daemon {
         Ok(Self {
             listener,
             socket,
+            node_id,
             store,
             data_lock,
             runtime_lock,
@@ -75,15 +79,17 @@ impl Daemon {
         let Self {
             listener,
             socket,
+            node_id,
             store,
             data_lock,
             runtime_lock,
         } = self;
-        let router = Arc::new(system::router());
+        let router = Arc::new(system::router(node_id));
         let mut connections = JoinSet::new();
         let mut shutdown = pin!(shutdown);
         tracing::info!(
             version = env!("CARGO_PKG_VERSION"),
+            %node_id,
             socket = %socket.display(),
             "daemon listening"
         );

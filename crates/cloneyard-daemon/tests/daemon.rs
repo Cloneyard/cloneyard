@@ -2,7 +2,7 @@ use std::fs::{self, DirBuilder};
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
-use cloneyard_daemon::system::{self, Version};
+use cloneyard_daemon::system::{self, Ping, Version};
 use cloneyard_daemon::{Daemon, paths};
 use cloneyard_rpc::Client;
 use serde_json::Value;
@@ -54,7 +54,7 @@ impl Running {
     }
 }
 
-async fn ping(socket: &Path) -> String {
+async fn ping(socket: &Path) -> Ping {
     let (reader, writer) = UnixStream::connect(socket).await.unwrap().into_split();
     Client::new(reader, writer)
         .call(system::PING, ())
@@ -76,12 +76,27 @@ async fn answers_ping_and_version() {
         .unwrap()
         .into_split();
     let mut client = Client::new(reader, writer);
-    let pong: String = client.call(system::PING, ()).await.unwrap();
+    let first: Ping = client.call(system::PING, ()).await.unwrap();
+    let second: Ping = client.call(system::PING, ()).await.unwrap();
     let version: Version = client.call(system::VERSION, ()).await.unwrap();
 
-    assert_eq!(pong, "pong");
+    assert_eq!(second.node_id, first.node_id);
     assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
     daemon.stop().await;
+}
+
+#[tokio::test]
+async fn keeps_the_node_id_after_a_restart_on_the_same_data_dir() {
+    let dirs = Dirs::new();
+    let first = start(&dirs).await;
+    let before = ping(&first.socket).await;
+    first.stop().await;
+
+    let second = start(&dirs).await;
+    let after = ping(&second.socket).await;
+
+    assert_eq!(after.node_id, before.node_id);
+    second.stop().await;
 }
 
 #[tokio::test]
@@ -160,7 +175,7 @@ async fn refuses_a_second_daemon_on_the_same_data_dir() {
         error.to_string(),
         format!("another cloneyard daemon is using {}", dirs.data.display())
     );
-    assert_eq!(ping(&first.socket).await, "pong");
+    ping(&first.socket).await;
     first.stop().await;
 }
 
@@ -180,7 +195,7 @@ async fn refuses_a_second_instance() {
             first.socket.display()
         )
     );
-    assert_eq!(ping(&first.socket).await, "pong");
+    ping(&first.socket).await;
     first.stop().await;
 }
 
@@ -193,7 +208,7 @@ async fn removes_the_socket_on_shutdown_and_starts_again() {
 
     assert!(!socket.exists());
     let second = start(&dirs).await;
-    assert_eq!(ping(&second.socket).await, "pong");
+    ping(&second.socket).await;
     second.stop().await;
 }
 
@@ -209,6 +224,6 @@ async fn replaces_a_stale_socket() {
 
     let daemon = start(&dirs).await;
 
-    assert_eq!(ping(&daemon.socket).await, "pong");
+    ping(&daemon.socket).await;
     daemon.stop().await;
 }
