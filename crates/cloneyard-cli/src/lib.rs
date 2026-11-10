@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 
 mod connection;
 mod ping;
+mod rpc;
 
 // A fixed name, so `cy --version` also prints "cloneyard <version>".
 #[derive(Debug, Parser)]
@@ -19,6 +20,17 @@ enum Command {
     Daemon,
     /// Check that the daemon answers, and how fast
     Ping,
+    /// Look at the daemon's API
+    Rpc {
+        #[command(subcommand)]
+        command: RpcCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RpcCommand {
+    /// Print the OpenRPC document of the API
+    Schema,
 }
 
 #[must_use]
@@ -26,6 +38,9 @@ pub fn run() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Daemon => cloneyard_daemon::run(),
         Command::Ping => ping::run(),
+        Command::Rpc {
+            command: RpcCommand::Schema,
+        } => rpc::schema(),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

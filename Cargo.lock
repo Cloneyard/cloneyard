@@ -172,6 +172,7 @@ dependencies = [
  "cloneyard-api",
  "cloneyard-daemon",
  "cloneyard-rpc",
+ "serde_json",
  "tempfile",
  "tokio",
 ]
