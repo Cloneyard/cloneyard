@@ -2,7 +2,7 @@ use std::fs::{self, DirBuilder};
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
-use cloneyard_daemon::system::{self, Ping, Version};
+use cloneyard_api::system::{Ping, PingResult, Version};
 use cloneyard_daemon::{Daemon, paths};
 use cloneyard_rpc::Client;
 use serde_json::Value;
@@ -54,10 +54,10 @@ impl Running {
     }
 }
 
-async fn ping(socket: &Path) -> Ping {
+async fn ping(socket: &Path) -> PingResult {
     let (reader, writer) = UnixStream::connect(socket).await.unwrap().into_split();
     Client::new(reader, writer)
-        .call(system::PING, ())
+        .request::<Ping>(())
         .await
         .unwrap()
 }
@@ -76,9 +76,9 @@ async fn answers_ping_and_version() {
         .unwrap()
         .into_split();
     let mut client = Client::new(reader, writer);
-    let first: Ping = client.call(system::PING, ()).await.unwrap();
-    let second: Ping = client.call(system::PING, ()).await.unwrap();
-    let version: Version = client.call(system::VERSION, ()).await.unwrap();
+    let first = client.request::<Ping>(()).await.unwrap();
+    let second = client.request::<Ping>(()).await.unwrap();
+    let version = client.request::<Version>(()).await.unwrap();
 
     assert_eq!(second.node_id, first.node_id);
     assert_eq!(version.version, env!("CARGO_PKG_VERSION"));

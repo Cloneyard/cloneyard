@@ -169,6 +169,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
+ "cloneyard-api",
  "cloneyard-daemon",
  "cloneyard-rpc",
  "tempfile",
@@ -180,6 +181,7 @@ name = "cloneyard-daemon"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "cloneyard-api",
  "cloneyard-rpc",
  "cloneyard-store",
  "serde",

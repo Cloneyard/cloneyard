@@ -13,7 +13,7 @@ use tokio::net::UnixListener;
 use tokio::task::JoinSet;
 use ulid::Ulid;
 
-use crate::{paths, system};
+use crate::{paths, router};
 
 /// A daemon that holds the single-instance locks, has the node's database open and listens on its socket.
 pub struct Daemon {
@@ -84,7 +84,7 @@ impl Daemon {
             data_lock,
             runtime_lock,
         } = self;
-        let router = Arc::new(system::router(node_id));
+        let router = Arc::new(router::router(node_id));
         let mut connections = JoinSet::new();
         let mut shutdown = pin!(shutdown);
         tracing::info!(

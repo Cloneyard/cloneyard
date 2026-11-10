@@ -2,8 +2,8 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
+use cloneyard_api::system::{Ping, Version};
 use cloneyard_daemon::paths;
-use cloneyard_daemon::system::{self, Ping, Version};
 use cloneyard_rpc::Client;
 use tokio::net::UnixStream;
 
@@ -34,9 +34,9 @@ pub(crate) fn run() -> anyhow::Result<()> {
         let (reader, writer) = stream.into_split();
         let mut client = Client::new(reader, writer);
         tokio::time::timeout(TIMEOUT, async {
-            let version: Version = client.call(system::VERSION, ()).await?;
+            let version = client.request::<Version>(()).await?;
             let start = Instant::now();
-            let ping: Ping = client.call(system::PING, ()).await?;
+            let ping = client.request::<Ping>(()).await?;
             anyhow::Ok((version, ping, start.elapsed()))
         })
         .await
