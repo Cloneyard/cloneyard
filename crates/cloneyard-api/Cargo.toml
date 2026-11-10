@@ -9,11 +9,11 @@ repository.workspace = true
 [dependencies]
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 ulid.workspace = true
 
 [dev-dependencies]
 regex = "1.13.1"
-serde_json.workspace = true
 
 [lints]
 workspace = true

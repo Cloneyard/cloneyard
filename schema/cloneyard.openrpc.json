@@ -1,0 +1,71 @@
+{
+  "openrpc": "1.4.1",
+  "info": {
+    "title": "Cloneyard",
+    "version": "0.0.1"
+  },
+  "methods": [
+    {
+      "name": "system.ping",
+      "summary": "Returns the node id, to check that the daemon answers",
+      "params": [],
+      "result": {
+        "name": "PingResult",
+        "schema": {
+          "$ref": "#/components/schemas/PingResult"
+        }
+      }
+    },
+    {
+      "name": "system.version",
+      "summary": "Returns the version of the daemon",
+      "params": [],
+      "result": {
+        "name": "VersionResult",
+        "schema": {
+          "$ref": "#/components/schemas/VersionResult"
+        }
+      }
+    },
+    {
+      "name": "rpc.discover",
+      "description": "Returns an OpenRPC schema as a description of this service",
+      "params": [],
+      "result": {
+        "name": "OpenRPC Schema",
+        "schema": {
+          "$ref": "https://raw.githubusercontent.com/open-rpc/meta-schema/master/schema.json"
+        }
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "PingResult": {
+        "properties": {
+          "node_id": {
+            "description": "The id of the node the daemon runs on.",
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id"
+        ],
+        "type": "object"
+      },
+      "VersionResult": {
+        "properties": {
+          "version": {
+            "description": "The version of the daemon, such as `0.0.1`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      }
+    }
+  }
+}

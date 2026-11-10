@@ -12,7 +12,6 @@ struct Sum;
 
 impl Method for Sum {
     const NAME: &'static str = "test.sum";
-    const SUMMARY: &'static str = "Returns the sum of two numbers";
     type Params = (i64, i64);
     type Result = i64;
 }

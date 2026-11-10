@@ -8,7 +8,8 @@ pub struct Ping;
 
 impl Method for Ping {
     const NAME: &'static str = "system.ping";
-    const SUMMARY: &'static str = "Returns the node id, to check that the daemon answers";
+    const SUMMARY: Option<&'static str> =
+        Some("Returns the node id, to check that the daemon answers");
     type Params = ();
     type Result = PingResult;
 }
@@ -24,7 +25,7 @@ pub struct Version;
 
 impl Method for Version {
     const NAME: &'static str = "system.version";
-    const SUMMARY: &'static str = "Returns the version of the daemon";
+    const SUMMARY: Option<&'static str> = Some("Returns the version of the daemon");
     type Params = ();
     type Result = VersionResult;
 }
