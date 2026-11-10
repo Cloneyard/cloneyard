@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod connection;
 mod ping;
 
 // A fixed name, so `cy --version` also prints "cloneyard <version>".
