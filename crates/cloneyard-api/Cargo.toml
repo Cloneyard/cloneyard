@@ -1,0 +1,19 @@
+[package]
+name = "cloneyard-api"
+description = "The methods of the Cloneyard API and their types"
+version.workspace = true
+edition.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+schemars.workspace = true
+serde.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+regex = "1.13.1"
+serde_json.workspace = true
+
+[lints]
+workspace = true

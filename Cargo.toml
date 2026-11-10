@@ -13,6 +13,7 @@ anyhow = "1.0.104"
 cloneyard-daemon = { path = "crates/cloneyard-daemon" }
 cloneyard-rpc = { path = "crates/cloneyard-rpc" }
 cloneyard-store = { path = "crates/cloneyard-store" }
+schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tempfile = "3.27.0"
