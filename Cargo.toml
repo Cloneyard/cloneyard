@@ -10,6 +10,7 @@ repository = "https://github.com/Cloneyard/cloneyard"
 
 [workspace.dependencies]
 anyhow = "1.0.104"
+cloneyard-api = { path = "crates/cloneyard-api" }
 cloneyard-daemon = { path = "crates/cloneyard-daemon" }
 cloneyard-rpc = { path = "crates/cloneyard-rpc" }
 cloneyard-store = { path = "crates/cloneyard-store" }

@@ -1,11 +1,25 @@
 use std::collections::HashMap;
 
+use cloneyard_api::Method;
 use cloneyard_rpc::{Client, ClientError, Error, Router, serve};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, duplex, split};
+use tokio::io::{
+    AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf,
+    duplex, split,
+};
+
+struct Sum;
+
+impl Method for Sum {
+    const NAME: &'static str = "test.sum";
+    const SUMMARY: &'static str = "Returns the sum of two numbers";
+    type Params = (i64, i64);
+    type Result = i64;
+}
 
 fn router() -> Router {
     Router::new()
+        .handle::<Sum>(|(a, b)| async move { Ok(a + b) })
         .method("add", |(a, b): (i64, i64)| async move { Ok(a + b) })
         .method("echo", |params: Value| async move { Ok(params) })
         .method("ping", |(): ()| async { Ok("pong") })
@@ -37,6 +51,16 @@ async fn exchange(input: impl AsRef<[u8]>) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+fn connect_to_router() -> Client<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>> {
+    let (client, server) = duplex(1024);
+    tokio::spawn(async move {
+        let (reader, writer) = split(server);
+        serve(&router(), reader, writer).await
+    });
+    let (reader, writer) = split(client);
+    Client::new(reader, writer)
 }
 
 async fn code_and_id_of(input: &str) -> (i64, Value) {
@@ -154,6 +178,15 @@ async fn answers_bad_params_with_invalid_params() {
 }
 
 #[tokio::test]
+async fn answers_params_of_the_wrong_type_for_a_typed_method_with_invalid_params() {
+    assert_eq!(
+        code_and_id_of("{\"jsonrpc\":\"2.0\",\"method\":\"test.sum\",\"params\":[\"x\"],\"id\":1}")
+            .await,
+        (Error::INVALID_PARAMS, json!(1))
+    );
+}
+
+#[tokio::test]
 async fn answers_an_unserializable_result_with_internal_error() {
     assert_eq!(
         code_and_id_of("{\"jsonrpc\":\"2.0\",\"method\":\"unserializable\",\"id\":1}").await,
@@ -216,13 +249,7 @@ async fn answers_the_last_line_without_a_newline() {
 
 #[tokio::test]
 async fn client_gets_the_result_or_the_error_object() {
-    let (client, server) = duplex(1024);
-    tokio::spawn(async move {
-        let (reader, writer) = split(server);
-        serve(&router(), reader, writer).await
-    });
-    let (reader, writer) = split(client);
-    let mut client = Client::new(reader, writer);
+    let mut client = connect_to_router();
 
     let sum: i64 = client.call("add", (2, 2)).await.unwrap();
     assert_eq!(sum, 4);
@@ -234,6 +261,22 @@ async fn client_gets_the_result_or_the_error_object() {
         Err(ClientError::Rpc(error)) => assert_eq!(error, Error::new(-32000, "boom")),
         other => panic!("expected an RPC error, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn client_gets_the_typed_result_of_a_typed_method() {
+    let sum = connect_to_router().request::<Sum>((2, 3)).await.unwrap();
+
+    assert_eq!(sum, 5);
+}
+
+#[test]
+fn lists_the_methods_it_answers() {
+    let router = Router::new()
+        .method("echo", |params: Value| async move { Ok(params) })
+        .handle::<Sum>(|(a, b)| async move { Ok(a + b) });
+
+    assert_eq!(router.methods(), ["echo", "test.sum"]);
 }
 
 #[tokio::test]

@@ -1,5 +1,6 @@
 use std::io;
 
+use cloneyard_api::Method;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -41,6 +42,18 @@ where
             writer,
             next_id: 1,
         }
+    }
+
+    /// Calls `M` with its params and gives its result.
+    ///
+    /// # Errors
+    ///
+    /// As [`Client::call`].
+    pub async fn request<M: Method>(
+        &mut self,
+        params: M::Params,
+    ) -> Result<M::Result, ClientError> {
+        self.call(M::NAME, params).await
     }
 
     /// Calls `method`; params that serialize to `null`, like `()`, are left out.

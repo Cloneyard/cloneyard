@@ -196,6 +196,7 @@ dependencies = [
 name = "cloneyard-rpc"
 version = "0.0.1"
 dependencies = [
+ "cloneyard-api",
  "serde",
  "serde_json",
  "thiserror",

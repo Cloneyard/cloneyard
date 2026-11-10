@@ -9,5 +9,5 @@ mod server;
 
 pub use client::{Client, ClientError};
 pub use error::Error;
-pub use router::Router;
+pub use router::{Handler, Router};
 pub use server::serve;
