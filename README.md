@@ -27,3 +27,5 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md). Report security issues privately, as d
 ## Licence
 
 [AGPL-3.0-only](LICENSE). The reasons are in [ADR 0001](docs/adr/0001-agpl-only-with-cla.md).
+
+The exception is [`cloneyard-api`](crates/cloneyard-api), the API's types and schema, which is `MIT OR Apache-2.0`.

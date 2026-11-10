@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+const SCHEMA: &str = include_str!("../../../schema/cloneyard.openrpc.json");
+
 struct Node {
     home: TempDir,
 }
@@ -161,6 +163,29 @@ fn ping_fails_when_no_daemon_runs() {
     assert!(
         stderr.starts_with("error: cloneyard daemon is not running"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn rpc_schema_prints_the_committed_schema() {
+    let node = Node::new();
+    let _daemon = node.start_daemon();
+
+    let output = node.cy("rpc").arg("schema").output().unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), SCHEMA);
+}
+
+#[test]
+fn rpc_schema_fails_like_ping_when_no_daemon_runs() {
+    let node = Node::new();
+
+    let schema = stderr_of_failure(&node.cy("rpc").arg("schema").output().unwrap());
+
+    assert_eq!(
+        schema,
+        stderr_of_failure(&node.cy("ping").output().unwrap())
     );
 }
 

@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+cloneyard-api.workspace = true
 cloneyard-rpc.workspace = true
 cloneyard-store.workspace = true
 serde.workspace = true

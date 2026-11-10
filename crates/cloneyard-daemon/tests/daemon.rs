@@ -2,13 +2,15 @@ use std::fs::{self, DirBuilder};
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
-use cloneyard_daemon::system::{self, Ping, Version};
+use cloneyard_api::rpc::Discover;
+use cloneyard_api::system::{Ping, PingResult, Version};
 use cloneyard_daemon::{Daemon, paths};
 use cloneyard_rpc::Client;
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -54,12 +56,13 @@ impl Running {
     }
 }
 
-async fn ping(socket: &Path) -> Ping {
+async fn connect(socket: &Path) -> Client<OwnedReadHalf, OwnedWriteHalf> {
     let (reader, writer) = UnixStream::connect(socket).await.unwrap().into_split();
     Client::new(reader, writer)
-        .call(system::PING, ())
-        .await
-        .unwrap()
+}
+
+async fn ping(socket: &Path) -> PingResult {
+    connect(socket).await.request::<Ping>(()).await.unwrap()
 }
 
 fn mode_of(path: &Path) -> u32 {
@@ -71,17 +74,28 @@ async fn answers_ping_and_version() {
     let dirs = Dirs::new();
     let daemon = start(&dirs).await;
 
-    let (reader, writer) = UnixStream::connect(&daemon.socket)
-        .await
-        .unwrap()
-        .into_split();
-    let mut client = Client::new(reader, writer);
-    let first: Ping = client.call(system::PING, ()).await.unwrap();
-    let second: Ping = client.call(system::PING, ()).await.unwrap();
-    let version: Version = client.call(system::VERSION, ()).await.unwrap();
+    let mut client = connect(&daemon.socket).await;
+    let first = client.request::<Ping>(()).await.unwrap();
+    let second = client.request::<Ping>(()).await.unwrap();
+    let version = client.request::<Version>(()).await.unwrap();
 
     assert_eq!(second.node_id, first.node_id);
     assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
+    daemon.stop().await;
+}
+
+#[tokio::test]
+async fn answers_rpc_discover_with_the_document() {
+    let dirs = Dirs::new();
+    let daemon = start(&dirs).await;
+
+    let document = connect(&daemon.socket)
+        .await
+        .request::<Discover>(())
+        .await
+        .unwrap();
+
+    assert_eq!(document, cloneyard_api::document());
     daemon.stop().await;
 }
 

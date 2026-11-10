@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::future::{self, Future};
 use std::pin::Pin;
 
+use cloneyard_api::Method;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -9,17 +10,45 @@ use serde_json::{Map, Value};
 use crate::Error;
 
 type Reply = Pin<Box<dyn Future<Output = Result<Value, Error>> + Send>>;
-type Handler = Box<dyn Fn(Value) -> Reply + Send + Sync>;
+type BoxedHandler = Box<dyn Fn(Value) -> Reply + Send + Sync>;
+
+/// An async function from params `P` to a result `R`, such as `|(): ()| async { Ok(1) }`.
+// `Fn` is the supertrait so that a closure passed as `impl Handler` gets its argument type from `P`.
+pub trait Handler<P, R>: Fn(P) -> Self::Reply + Send + Sync + 'static {
+    type Reply: Future<Output = Result<R, Error>> + Send + 'static;
+}
+
+impl<P, R, F, Fut> Handler<P, R> for F
+where
+    F: Fn(P) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<R, Error>> + Send + 'static,
+{
+    type Reply = Fut;
+}
 
 #[derive(Default)]
 pub struct Router {
-    handlers: HashMap<String, Handler>,
+    handlers: HashMap<String, BoxedHandler>,
 }
 
 impl Router {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Adds `M`, whose handler takes its params and returns its result.
+    #[must_use]
+    pub fn handle<M: Method>(self, handler: impl Handler<M::Params, M::Result>) -> Self {
+        self.method(M::NAME, handler)
+    }
+
+    /// The names of the methods this router answers, sorted.
+    #[must_use]
+    pub fn methods(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.handlers.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names
     }
 
     /// Adds a method whose params deserialize into `P`; a method without params takes `()`.

@@ -3,8 +3,8 @@
 mod config;
 mod daemon;
 pub mod paths;
+mod router;
 mod run;
-pub mod system;
 
 pub use config::{Config, Log};
 pub use daemon::Daemon;
