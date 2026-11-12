@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -21,12 +22,19 @@ impl Node {
     }
 
     fn cy(&self, subcommand: &str) -> Command {
+        let home = self.home.path();
         let mut cy = Command::new(env!("CARGO_BIN_EXE_cy"));
         cy.arg(subcommand)
-            .env("XDG_RUNTIME_DIR", self.home.path())
-            .env("XDG_CONFIG_HOME", self.home.path().join("config"))
-            .env("XDG_DATA_HOME", self.home.path().join("data"))
-            .env_remove("RUST_LOG");
+            .env_clear()
+            .env("HOME", home)
+            .env("XDG_CONFIG_HOME", home.join("config"))
+            .env("XDG_DATA_HOME", home.join("data"))
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("XDG_CACHE_HOME", home.join("cache"))
+            .env("XDG_RUNTIME_DIR", home);
+        if let Some(path) = env::var_os("PATH") {
+            cy.env("PATH", path);
+        }
         cy
     }
 
@@ -235,7 +243,6 @@ fn reads_node_toml_from_home_when_xdg_config_home_is_relative() {
 
     let output = node
         .cy("daemon")
-        .env("HOME", node.home.path())
         .env("XDG_CONFIG_HOME", "config")
         .output()
         .unwrap();
@@ -251,9 +258,7 @@ fn reads_node_toml_from_home_when_xdg_config_home_is_relative() {
 fn keeps_the_database_in_home_when_xdg_data_home_is_relative() {
     let node = Node::new();
     let mut daemon = node.cy("daemon");
-    daemon
-        .env("HOME", node.home.path())
-        .env("XDG_DATA_HOME", "data");
+    daemon.env("XDG_DATA_HOME", "data");
 
     let _daemon = node.spawn(daemon);
 
