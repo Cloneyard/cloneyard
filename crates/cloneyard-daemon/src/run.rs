@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
 
+use crate::config::parse_filter;
 use crate::{Config, Daemon, Log, paths};
 
 /// Runs the daemon in the foreground until SIGTERM or SIGINT.
@@ -29,9 +30,9 @@ pub fn run() -> anyhow::Result<()> {
 
 fn init_logging(log: &Log) -> anyhow::Result<()> {
     let filter = match env::var_os(EnvFilter::DEFAULT_ENV).filter(|value| !value.is_empty()) {
-        Some(directives) => EnvFilter::try_new(directives.to_string_lossy())
+        Some(directives) => parse_filter(&directives.to_string_lossy())
             .with_context(|| format!("invalid {}", EnvFilter::DEFAULT_ENV))?,
-        None => EnvFilter::try_new(&log.level)?,
+        None => parse_filter(&log.level)?,
     };
     tracing_subscriber::fmt()
         .with_env_filter(filter)

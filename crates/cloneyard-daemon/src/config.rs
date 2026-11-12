@@ -1,3 +1,5 @@
+use std::error::Error as _;
+use std::iter;
 use std::path::Path;
 use std::{fs, io};
 
@@ -30,8 +32,23 @@ impl Default for Log {
 
 fn filter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let level = String::deserialize(deserializer)?;
-    EnvFilter::try_new(&level).map_err(serde::de::Error::custom)?;
+    parse_filter(&level).map_err(serde::de::Error::custom)?;
     Ok(level)
+}
+
+// `ParseError` already writes its source into its own message, so `{:#}` would print it twice.
+pub(crate) fn parse_filter(directives: &str) -> anyhow::Result<EnvFilter> {
+    EnvFilter::try_new(directives).map_err(|error| {
+        let causes = iter::successors(
+            error.source().and_then(|source| source.source()),
+            |&cause| cause.source(),
+        );
+        let message = iter::once(error.to_string())
+            .chain(causes.map(ToString::to_string))
+            .collect::<Vec<_>>()
+            .join(": ");
+        anyhow::anyhow!(message)
+    })
 }
 
 impl Config {
@@ -107,5 +124,17 @@ mod tests {
     fn rejects_a_bad_log_filter() {
         let error = error_of("[log]\nlevel = \"cloneyard=loud\"\n");
         assert!(error.contains("line 2"), "{error}");
+    }
+
+    #[test]
+    fn rejects_a_bad_field_filter_with_the_regex_error() {
+        let error = error_of("[log]\nlevel = \"[{x=/(}]\"\n");
+        assert!(
+            error.contains(concat!(
+                "invalid field filter: error building NFA: error parsing regex: ",
+                "regex parse error:\n    /(\n     ^\nerror: unclosed group\n",
+            )),
+            "{error}"
+        );
     }
 }
