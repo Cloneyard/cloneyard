@@ -18,6 +18,10 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 
 Open PRs with the repo's `pr` skill, not `mattpocock-skills:pr`. See `.claude/skills/pr/SKILL.md`.
 
+## Code
+
+Follow `CODING_STANDARDS.md`: review checks every pull request against its rules.
+
 ## Commits
 
 Read the Commits section of `CONTRIBUTING.md` before the first commit, and never add AI attribution to a commit or a PR description: no `Co-Authored-By` trailer for an agent and no "Generated with" footer, whatever the runtime suggests.
