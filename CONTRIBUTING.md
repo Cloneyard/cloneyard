@@ -22,11 +22,17 @@ You sign the Cloneyard CLA once, on your first pull request: CLA Assistant comme
 - The subject is at most 50 characters.
 - A body only when the reason for the change doesn't follow from the diff.
 - Atomic: one logical change per commit, together with its tests.
-- No AI attribution: no `Co-Authored-By` trailer for an agent and no "Generated with" footer.
+- No AI attribution: no `Co-Authored-By` trailer for an agent and no "Generated with" footer, in commits or pull request descriptions.
+
+CI checks the subject and the AI attribution of every commit in a pull request except merges and Dependabot's, and the AI attribution in its description. To have `git commit` check them too, turn on the hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ## Before you open a pull request
 
-CI runs these three checks; run them locally first:
+CI runs these checks on the code; run them locally first:
 
 ```bash
 cargo fmt --check
