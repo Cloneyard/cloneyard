@@ -35,3 +35,5 @@ cargo test --locked
 ```
 
 When you change a type in `cloneyard-api`, regenerate `schema/cloneyard.openrpc.json` with `UPDATE_SCHEMA=1 cargo test -p cloneyard-api --test schema` and commit it with the change.
+
+Review checks the code against the rules in [`CODING_STANDARDS.md`](CODING_STANDARDS.md).

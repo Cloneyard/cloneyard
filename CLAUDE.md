@@ -18,6 +18,10 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 
 Open PRs with the repo's `pr` skill, not `mattpocock-skills:pr`. See `.claude/skills/pr/SKILL.md`.
 
+## Code
+
+Follow `CODING_STANDARDS.md`: review checks every pull request against its rules.
+
 ## Commits
 
 - Conventional Commits, `type(scope): description`, with the types and scopes from `CONTRIBUTING.md`.
