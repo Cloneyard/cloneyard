@@ -1,10 +1,13 @@
 use std::env;
+use std::error::Error as _;
 use std::future::Future;
 use std::io::{self, IsTerminal as _};
+use std::iter;
 
 use anyhow::Context as _;
 use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::ParseError;
 
 use crate::{Config, Daemon, Log, paths};
 
@@ -30,6 +33,7 @@ pub fn run() -> anyhow::Result<()> {
 fn init_logging(log: &Log) -> anyhow::Result<()> {
     let filter = match env::var_os(EnvFilter::DEFAULT_ENV).filter(|value| !value.is_empty()) {
         Some(directives) => EnvFilter::try_new(directives.to_string_lossy())
+            .map_err(|error| without_repeated_source(&error))
             .with_context(|| format!("invalid {}", EnvFilter::DEFAULT_ENV))?,
         None => EnvFilter::try_new(&log.level)?,
     };
@@ -39,6 +43,19 @@ fn init_logging(log: &Log) -> anyhow::Result<()> {
         .with_ansi(io::stderr().is_terminal())
         .init();
     Ok(())
+}
+
+// `ParseError` already writes its source into its own message, so `{:#}` would print it twice.
+fn without_repeated_source(error: &ParseError) -> anyhow::Error {
+    let causes = iter::successors(
+        error.source().and_then(|source| source.source()),
+        |&cause| cause.source(),
+    );
+    let message = iter::once(error.to_string())
+        .chain(causes.map(ToString::to_string))
+        .collect::<Vec<_>>()
+        .join(": ");
+    anyhow::anyhow!(message)
 }
 
 fn shutdown_signal() -> io::Result<impl Future<Output = ()>> {

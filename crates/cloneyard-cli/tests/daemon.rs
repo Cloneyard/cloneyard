@@ -203,6 +203,47 @@ fn the_daemon_refuses_an_invalid_node_toml() {
 }
 
 #[test]
+fn the_daemon_refuses_an_invalid_rust_log_and_says_why_once() {
+    let node = Node::new();
+
+    let output = node
+        .cy("daemon")
+        .env("RUST_LOG", "cloneyard=nonsense")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        stderr_of_failure(&output),
+        concat!(
+            "error: invalid RUST_LOG: error parsing level filter: expected one of ",
+            "\"off\", \"error\", \"warn\", \"info\", \"debug\", \"trace\", or a number 0-5\n",
+        )
+    );
+}
+
+#[test]
+fn an_invalid_rust_log_field_filter_keeps_the_regex_error() {
+    let node = Node::new();
+
+    let output = node
+        .cy("daemon")
+        .env("RUST_LOG", "[{x=/(}]")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        stderr_of_failure(&output),
+        concat!(
+            "error: invalid RUST_LOG: invalid field filter: error building NFA: ",
+            "error parsing regex: regex parse error:\n",
+            "    /(\n",
+            "     ^\n",
+            "error: unclosed group\n",
+        )
+    );
+}
+
+#[test]
 fn commands_stop_without_an_absolute_xdg_runtime_dir() {
     let node = Node::new();
 
