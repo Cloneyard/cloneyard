@@ -1,0 +1,110 @@
+#!/bin/sh
+set -eu
+
+types='feat|fix|chore|refactor|docs|test|style|perf|build|ci'
+limit=50
+agents='claude copilot cursor codex gemini devin'
+products='opus sonnet haiku fable code agent cli ai'
+vendors='anthropic github google openai'
+
+usage() {
+	echo 'usage: scripts/check-commit-msg [--description] [FILE]' >&2
+	exit 2
+}
+
+is_description=false
+if [ "${1-}" = --description ]; then
+	is_description=true
+	shift
+fi
+case ${1-} in -?*) usage ;; esac
+[ $# -le 1 ] || usage
+
+# GitHub stores a description edited in the browser with CRLF line endings.
+if [ $# -eq 1 ]; then
+	text=$(tr -d '\r' <"$1")
+else
+	text=$(tr -d '\r')
+fi
+
+status=0
+report() {
+	printf '%s\n' "$1" >&2
+	status=1
+}
+
+in_list() {
+	case " $2 " in *" $1 "*) return 0 ;; esac
+	return 1
+}
+
+is_agent_trailer() {
+	value=$(printf '%s' "${1#*:}" | tr '[:upper:]' '[:lower:]')
+	name=${value%%<*}
+	email=
+	case $value in *'<'*)
+		email=${value#*<}
+		email=${email%%>*}
+		;;
+	esac
+
+	case $email in
+	noreply@anthropic.com | cursoragent@cursor.com | *+copilot@users.noreply.github.com) return 0 ;;
+	esac
+	case $name in *'[bot]'*)
+		for agent in $agents; do
+			case $name in *"$agent"*) return 0 ;; esac
+		done
+		return 1
+		;;
+	esac
+	read -r first second _ <<EOF
+$name
+EOF
+	if in_list "$first" "$agents"; then
+		[ -z "$second" ] || in_list "$second" "$products"
+		return
+	fi
+	in_list "$first" "$vendors" && in_list "$second" "$agents"
+}
+
+if ! $is_description; then
+	# Git's subject is the whole first paragraph, joined with spaces.
+	subject=$(printf '%s\n' "$text" | awk '
+		!NF { if (subject != "") exit; next }
+		{ sub(/[[:space:]]+$/, ""); subject = subject (subject == "" ? "" : " ") $0 }
+		END { print subject }')
+
+	if [ -z "$subject" ]; then
+		report 'the message is empty'
+	else
+		if ! printf '%s\n' "$subject" | grep -Eq "^($types)(\([^()]+\))?!?: [^[:space:]]"; then
+			report "the subject is not \"type(scope): description\" with a type from CONTRIBUTING.md"
+		fi
+		# Without the UTF-8 continuation bytes, 0x80-0xBF, one byte is left per character.
+		length=$(printf '%s' "$subject" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d '[:space:]')
+		if [ "$length" -gt "$limit" ]; then
+			report "the subject is $length characters, more than $limit"
+		fi
+	fi
+fi
+
+coauthors=$(printf '%s\n' "$text" | grep -i '^[[:space:]]*co-authored-by:' || true)
+while IFS= read -r line; do
+	if [ -n "$line" ] && is_agent_trailer "$line"; then
+		report "an agent is a co-author: $line"
+	fi
+done <<EOF
+$coauthors
+EOF
+
+generated=$(printf '%s\n' "$text" | LC_ALL=C grep -Ei '^([^A-Za-z]|<[^>]*>)*generated with' || true)
+while IFS= read -r line; do
+	if [ -n "$line" ]; then
+		report "a \"Generated with\" line: $line"
+	fi
+done <<EOF
+$generated
+EOF
+
+exit "$status"
