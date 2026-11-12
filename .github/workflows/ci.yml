@@ -38,3 +38,19 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
+      - name: Check the home directory for test leaks
+        run: |
+          leaked=0
+          for dir in \
+            "${XDG_CONFIG_HOME:-$HOME/.config}" \
+            "${XDG_DATA_HOME:-$HOME/.local/share}" \
+            "${XDG_STATE_HOME:-$HOME/.local/state}" \
+            "${XDG_CACHE_HOME:-$HOME/.cache}" \
+            ${XDG_RUNTIME_DIR:+"$XDG_RUNTIME_DIR"}
+          do
+            if [ -e "$dir/cloneyard" ]; then
+              echo "::error::cargo test left $dir/cloneyard"
+              leaked=1
+            fi
+          done
+          exit "$leaked"
