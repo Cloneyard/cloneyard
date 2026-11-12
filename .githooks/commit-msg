@@ -1,0 +1,13 @@
+#!/bin/sh
+set -u
+
+git rev-parse -q --verify MERGE_HEAD >/dev/null && exit 0
+case $(head -n 1 "$1") in
+# rebase --autosquash folds these away, and CI refuses them if they get pushed.
+'fixup! '* | 'squash! '* | 'amend! '*) exit 0 ;;
+esac
+
+# Git drops comments and the `commit -v` diff only after this hook has run.
+sed -n -e '/^# -* >8 -*/q' -e '/^#/!p' "$1" |"$(dirname "$0")/../scripts/check-commit-msg" && exit 0
+echo "The commit rules are in CONTRIBUTING.md; git kept your message in $1." >&2
+exit 1
