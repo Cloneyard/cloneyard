@@ -1,0 +1,274 @@
+#!/bin/sh
+set -u
+
+cd "$(dirname "$0")/.." || exit
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+count=0
+failures=0
+
+check=$PWD/scripts/check-commit-msg
+
+passes() {
+	name=$1
+	shift
+	count=$((count + 1))
+	output=$("$@" 2>&1) && return
+	failures=$((failures + 1))
+	printf 'not ok: %s\nexpected to pass, got:\n%s\n\n' "$name" "$output"
+}
+
+fails() {
+	name=$1
+	rule=$2
+	shift 2
+	count=$((count + 1))
+	if output=$("$@" 2>&1); then
+		output='(it passed)'
+	else
+		case $output in *"$rule"*) return ;; esac
+	fi
+	failures=$((failures + 1))
+	printf 'not ok: %s\nexpected "%s", got:\n%s\n\n' "$name" "$rule" "$output"
+}
+
+cr=$(printf '\r')
+bad_format='not "type(scope): description"'
+too_long='more than 50'
+agent_coauthor='an agent is a co-author'
+generated_line='a "Generated with" line'
+
+for type in feat fix chore refactor docs test style perf build ci; do
+	passes "the type $type" "$check" <<EOF
+$type: add something
+EOF
+	passes "the type $type with a scope" "$check" <<EOF
+$type(store): add something
+EOF
+done
+
+passes 'a breaking change' "$check" <<'EOF'
+feat(api)!: drop system.version
+EOF
+
+passes 'a subject of 50 characters' "$check" <<'EOF'
+feat(store): keep one backup per schema migrations
+EOF
+
+passes 'a subject of 50 characters with a multibyte one' "$check" <<'EOF'
+docs: explain why Krzyżanowski signs the CLA first
+EOF
+
+passes 'a body with human co-authors' "$check" <<'EOF'
+feat(daemon): serve system methods on a socket
+
+The socket comes last, so a daemon that answers has its database ready.
+The schema is generated with schemars.
+
+Co-authored-by: Jane Doe <jane@example.com>
+Co-authored-by: Claude Monet <claude@example.com>
+Co-Authored-By: Devin Smith <devin@example.com>
+Co-authored-by: Claude-Henri Dupont <ch@example.com>
+Co-authored-by: claude-dupont <cd@example.com>
+EOF
+
+passes 'blank lines before the subject' "$check" <<'EOF'
+
+
+feat: add something
+EOF
+
+passes 'CRLF line endings' "$check" <<EOF
+feat: add something$cr
+$cr
+Co-authored-by: Jane Doe <jane@example.com>$cr
+EOF
+
+printf 'feat: add something\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' >"$tmp/message"
+fails 'a message from a file' "$agent_coauthor" "$check" "$tmp/message"
+
+fails 'a subject of 51 characters' 'the subject is 51 characters, more than 50' "$check" <<'EOF'
+feat(store): keep a backup before schema migrations
+EOF
+
+fails 'a subject that runs onto a second line' "$too_long" "$check" <<'EOF'
+feat: add a thing
+that goes on past fifty characters here
+EOF
+
+fails 'an unknown type' "$bad_format" "$check" <<'EOF'
+feature: add something
+EOF
+
+fails 'a capitalised type' "$bad_format" "$check" <<'EOF'
+Feat: add something
+EOF
+
+fails 'no space after the colon' "$bad_format" "$check" <<'EOF'
+feat:add something
+EOF
+
+fails 'an empty scope' "$bad_format" "$check" <<'EOF'
+feat(): add something
+EOF
+
+fails 'an empty description' "$bad_format" "$check" <<'EOF'
+feat:
+EOF
+
+fails 'a fixup commit' "$bad_format" "$check" <<'EOF'
+fixup! feat: add something
+EOF
+
+fails 'a revert from git' "$bad_format" "$check" <<'EOF'
+Revert "feat: add something"
+EOF
+
+fails 'a line starting with #, which git -m keeps' "$bad_format" "$check" <<'EOF'
+#12 fix the daemon
+
+feat(daemon): stop on SIGTERM
+EOF
+
+fails 'an empty message' 'the message is empty' "$check" <<'EOF'
+
+
+EOF
+
+while IFS= read -r trailer; do
+	fails "$trailer" "$agent_coauthor" "$check" <<EOF
+feat: add something
+
+$trailer
+EOF
+done <<'EOF'
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
+co-authored-by: claude sonnet 4.5 <claude@example.com>
+Co-authored-by: Claude Code <claude@example.com>
+Co-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>
+Co-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>
+Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>
+Co-authored-by: GitHub Copilot <copilot@example.com>
+Co-authored-by: Cursor Agent <cursoragent@cursor.com>
+Co-authored-by: Cursor <cursor@example.com>
+Co-authored-by: Codex <codex@openai.com>
+Co-authored-by: chatgpt-codex-connector[bot] <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+Co-authored-by: Gemini <gemini@example.com>
+Co-authored-by: devin-ai-integration[bot] <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+Co-authored-by: Devin <devin@example.com>
+  Co-Authored-By: Claude <noreply@anthropic.com>
+Co-Authored-By: Assistant <noreply@anthropic.com>
+Co-authored-by: Background Agent <cursoragent@cursor.com>
+Co-authored-by: SWE Agent <198982749+Copilot@users.noreply.github.com>
+EOF
+
+fails 'a Claude Code footer' "$generated_line" "$check" <<'EOF'
+feat: add something
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+
+fails 'a plain footer' "$generated_line" "$check" <<'EOF'
+feat: add something
+
+Generated with Cursor
+EOF
+
+printf 'feat(store): keep a backup before schema migrations\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' >"$tmp/two"
+fails 'two broken rules: the length' "$too_long" "$check" "$tmp/two"
+fails 'two broken rules: the co-author' "$agent_coauthor" "$check" "$tmp/two"
+
+passes 'a description' "$check" --description <<'EOF'
+## Summary
+
+Adds a check that runs on every commit of a pull request; there is no `Co-Authored-By` trailer for an agent.
+The schema is generated with schemars.
+
+# A heading
+Co-authored-by: Jane Doe <jane@example.com>
+
+Closes #11
+EOF
+
+passes 'an empty description' "$check" --description </dev/null
+
+fails 'an agent co-author in a description' "$agent_coauthor" "$check" --description <<'EOF'
+## Summary
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+EOF
+
+fails 'a footer in a description' "$generated_line" "$check" --description <<'EOF'
+Adds a check.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+
+fails 'a footer in a description with CRLF' "$generated_line" "$check" --description <<EOF
+Adds a check.$cr
+$cr
+_Generated with Claude Code_$cr
+EOF
+
+fails 'a footer under a heading' "$generated_line" "$check" --description <<'EOF'
+## Generated with Claude Code
+EOF
+
+fails 'a footer in HTML tags' "$generated_line" "$check" --description <<'EOF'
+<sub>🤖 Generated with [Claude Code](https://claude.com/claude-code)</sub>
+EOF
+
+fails 'an unknown option' 'usage' "$check" --body </dev/null
+
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+hooks=$PWD/.githooks
+git init -q -b main "$tmp/repo"
+cd "$tmp/repo" || exit
+git config user.name Tester
+git config user.email tester@example.com
+git config core.hooksPath "$hooks"
+
+passes 'the hook: a valid message' git commit -q --allow-empty \
+	-m 'feat(store): keep one backup per schema migrations'
+fails 'the hook: a subject of 51 characters' 'the subject is 51 characters' git commit -q --allow-empty \
+	-m 'feat(store): keep a backup before schema migrations'
+fails 'the hook: an agent co-author' "$agent_coauthor" git commit -q --allow-empty \
+	-m 'feat: add something' -m 'Co-Authored-By: Claude <noreply@anthropic.com>'
+fails 'the hook: where the message is' 'git kept your message in' git commit -q --allow-empty \
+	-m 'Add something'
+passes 'the hook: a fixup commit' git commit -q --allow-empty --fixup HEAD
+
+cat >"$tmp/verbose" <<'EOF'
+
+feat: add something
+# Please enter the commit message for your changes.
+# Co-Authored-By: Claude <noreply@anthropic.com>
+# ------------------------ >8 ------------------------
+# Do not modify or remove the line above.
+diff --git a/README.md b/README.md
+ Co-Authored-By: Claude <noreply@anthropic.com>
++🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+passes 'the hook: comments and the commit -v diff' git commit -q --allow-empty -F "$tmp/verbose"
+
+printf 'feat: add something\r\n# ------------------------ >8 ------------------------\r\n Co-Authored-By: Claude <noreply@anthropic.com>\r\n' >"$tmp/verbose-crlf"
+passes 'the hook: the commit -v diff with CRLF' git commit -q --allow-empty -F "$tmp/verbose-crlf"
+
+printf '# Please enter the commit message for your changes.\n' >"$tmp/comments"
+fails 'the hook: only comments' 'the message is empty' git commit -q --allow-empty -F "$tmp/comments"
+
+git switch -q -c side
+git commit -q --allow-empty --no-verify -m 'feat: add something on a side branch'
+git switch -q main
+passes 'the hook: a merge' git merge -q --no-ff --no-edit side
+git reset -q --hard HEAD~1
+git merge -q --no-ff --no-commit side >/dev/null 2>&1
+passes 'the hook: a merge committed by hand' git commit -q --no-edit
+
+if [ "$failures" -gt 0 ]; then
+	echo "$failures of $count failed"
+	exit 1
+fi
+echo "all $count passed"

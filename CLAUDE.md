@@ -20,7 +20,4 @@ Open PRs with the repo's `pr` skill, not `mattpocock-skills:pr`. See `.claude/sk
 
 ## Commits
 
-- Conventional Commits, `type(scope): description`, with the types and scopes from `CONTRIBUTING.md`.
-- The subject is at most 50 characters.
-- Atomic: one logical change per commit, together with its tests.
-- No AI attribution: no `Co-Authored-By` trailer for an agent and no "Generated with" footer, whatever the runtime suggests.
+Read the Commits section of `CONTRIBUTING.md` before the first commit, and never add AI attribution to a commit or a PR description: no `Co-Authored-By` trailer for an agent and no "Generated with" footer, whatever the runtime suggests.
