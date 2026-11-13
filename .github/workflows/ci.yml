@@ -63,3 +63,16 @@ jobs:
         with:
           node-version: 24
       - run: npx --yes @fkrzski/docs-schema@0.6.0 docs
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check licences, advisories, bans and sources
+        run: cargo deny --locked check

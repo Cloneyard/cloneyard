@@ -1,0 +1,15 @@
+[graph]
+all-features = true
+
+[licenses]
+allow = ["Apache-2.0", "MIT", "Unicode-3.0", "Zlib"]
+exceptions = [
+    { crate = "cloneyard-cli", allow = ["AGPL-3.0-only"] },
+    { crate = "cloneyard-daemon", allow = ["AGPL-3.0-only"] },
+    { crate = "cloneyard-rpc", allow = ["AGPL-3.0-only"] },
+    { crate = "cloneyard-store", allow = ["AGPL-3.0-only"] },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
