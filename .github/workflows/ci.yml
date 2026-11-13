@@ -82,3 +82,15 @@ jobs:
         run: scripts/test-check-licence-direction
       - name: Check the licence direction
         run: scripts/check-licence-direction
+
+  musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install musl-gcc for the bundled SQLite
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install the Rust toolchain and the musl target
+        run: rustup toolchain install && rustup target add x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Build for x86_64-unknown-linux-musl
+        run: cargo build --locked --workspace --target x86_64-unknown-linux-musl
