@@ -20,24 +20,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install
-      - run: cargo fmt --check
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
+      - name: Check the formatting
+        run: cargo fmt --check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Lint with clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked
+      - name: Run the tests
+        run: cargo test --locked
       - name: Check the home directory for test leaks
         run: |
           leaked=0
@@ -62,4 +68,36 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: npx --yes @fkrzski/docs-schema@0.6.0 docs
+      - name: Check the docs and the changelog
+        run: npx --yes @fkrzski/docs-schema@0.6.0 docs
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check licences, advisories, bans and sources
+        run: cargo deny --locked check
+      - name: Lint the licence direction scripts
+        run: shellcheck scripts/check-licence-direction scripts/test-check-licence-direction
+      - name: Test the licence direction check
+        run: scripts/test-check-licence-direction
+      - name: Check the licence direction
+        run: scripts/check-licence-direction
+
+  musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install musl-gcc for the bundled SQLite
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install the Rust toolchain and the musl target
+        run: rustup toolchain install && rustup target add x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Build for x86_64-unknown-linux-musl
+        run: cargo build --locked --workspace --target x86_64-unknown-linux-musl

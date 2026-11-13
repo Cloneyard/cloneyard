@@ -48,4 +48,19 @@ CI also checks `docs/` and `CHANGELOG.md`; that check needs only Node.js:
 npx --yes @fkrzski/docs-schema@0.6.0 docs
 ```
 
+The dependencies are checked too: their licences, advisories and sources with [cargo-deny](https://github.com/EmbarkStudios/cargo-deny), and that no crate outside AGPL depends on an AGPL crate of the workspace, as [ADR 0006](docs/adr/0006-permissive-dependency-licences.md) explains:
+
+```bash
+cargo install cargo-deny@0.20.2 --locked
+cargo deny --locked check
+scripts/check-licence-direction
+```
+
+CI also builds the workspace for `x86_64-unknown-linux-musl`. Locally that needs the target and `musl-gcc`, which Debian and Ubuntu ship in `musl-tools`:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --locked --workspace --target x86_64-unknown-linux-musl
+```
+
 Review checks the code against the rules in [`CODING_STANDARDS.md`](CODING_STANDARDS.md).

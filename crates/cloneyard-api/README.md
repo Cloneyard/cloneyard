@@ -12,7 +12,7 @@ The methods of the Cloneyard API as Rust types, and the OpenRPC document built f
 ## Out of scope
 
 - The protocol, which lives in `cloneyard-rpc`, and the handlers, which live in the daemon.
-- Any dependency on `cloneyard-rpc` or another AGPL crate.
+- Any dependency on `cloneyard-rpc` or another AGPL crate: `scripts/check-licence-direction` fails CI on a normal or build one.
 - Params, errors and events in the document, until a method needs them.
 
-[ADR 0005](../../docs/adr/0005-api-schema-from-rust-types.md) explains why the schema comes from the types.
+[ADR 0005](../../docs/adr/0005-api-schema-from-rust-types.md) explains why the schema comes from the types, and [ADR 0006](../../docs/adr/0006-permissive-dependency-licences.md) why it never depends on an AGPL crate.

@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+shipped_tree() {
+	crate=$1
+	shift
+	cargo tree --color never -p "$crate" -e normal,build --target all --all-features "$@"
+}
+
+members=$(cargo tree --color never --workspace --depth 0 --prefix none -e normal -f '{l}|{p}')
+agpl_only='^AGPL-3\.0-(only|or-later)[|]'
+agpl=$(printf '%s\n' "$members" | grep -E "$agpl_only" || true)
+others=$(printf '%s\n' "$members" | grep -Ev -e "$agpl_only" -e '^$' || true)
+
+status=0
+while IFS='|' read -r licence package; do
+	[ -n "$package" ] || continue
+	name=${package%% *}
+	reached=$(shipped_tree "$name" --prefix none -f '{p}')
+	reached=$(printf '%s\n' "$reached" | sed 's/ (\*)$//')
+	while IFS='|' read -r agpl_licence agpl_package; do
+		[ -n "$agpl_package" ] || continue
+		printf '%s\n' "$reached" | grep -Fqx "$agpl_package" || continue
+		agpl_name=${agpl_package%% *}
+		printf '%s (%s) depends on %s (%s):\n' "$name" "$licence" "$agpl_name" "$agpl_licence" >&2
+		shipped_tree "$name" -i "$agpl_name" >&2
+		status=1
+	done <<EOF
+$agpl
+EOF
+done <<EOF
+$others
+EOF
+
+exit "$status"

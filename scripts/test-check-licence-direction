@@ -1,0 +1,146 @@
+#!/bin/sh
+set -u
+
+cd "$(dirname "$0")/.." || exit
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+count=0
+failures=0
+
+check=$PWD/scripts/check-licence-direction
+export CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=always
+
+passes() {
+	name=$1
+	count=$((count + 1))
+	output=$(cd "$dir" && "$check" 2>&1) && return
+	failures=$((failures + 1))
+	printf 'not ok: %s\nexpected to pass, got:\n%s\n\n' "$name" "$output"
+}
+
+fails() {
+	name=$1
+	rule=$2
+	count=$((count + 1))
+	if output=$(cd "$dir" && "$check" 2>&1); then
+		output='(it passed)'
+	else
+		case $output in *"$rule"*) return ;; esac
+	fi
+	failures=$((failures + 1))
+	printf 'not ok: %s\nexpected "%s", got:\n%s\n\n' "$name" "$rule" "$output"
+}
+
+workspace() {
+	dir=$tmp/$1
+	mkdir -p "$dir"
+	cat >"$dir/Cargo.toml" <<'EOF'
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+license = "AGPL-3.0-only"
+EOF
+}
+
+# AGPL inherits the licence from the workspace, as in this repo; the rest of the manifest is on stdin.
+crate() {
+	mkdir -p "$dir/crates/$1/src"
+	: >"$dir/crates/$1/src/lib.rs"
+	if [ "$2" = AGPL ]; then
+		licence='license.workspace = true'
+	else
+		licence="license = \"$2\""
+	fi
+	{
+		printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2024"\n%s\n\n' "$1" "$licence"
+		cat
+	} >"$dir/crates/$1/Cargo.toml"
+}
+
+workspace normal
+crate agpl AGPL </dev/null
+crate permissive 'MIT OR Apache-2.0' <<'EOF'
+[dependencies]
+agpl = { path = "../agpl" }
+EOF
+fails 'a normal dependency' 'permissive (MIT OR Apache-2.0) depends on agpl (AGPL-3.0-only)'
+
+workspace build
+crate agpl AGPL </dev/null
+crate permissive MIT <<'EOF'
+[build-dependencies]
+agpl = { path = "../agpl" }
+EOF
+fails 'a build dependency' 'permissive (MIT) depends on agpl (AGPL-3.0-only)'
+
+workspace windows
+crate agpl AGPL </dev/null
+crate permissive MIT <<'EOF'
+[target.'cfg(windows)'.dependencies]
+agpl = { path = "../agpl" }
+EOF
+fails 'a dependency on Windows only' 'permissive (MIT) depends on agpl (AGPL-3.0-only)'
+
+workspace transitive
+crate agpl AGPL </dev/null
+crate middle MIT <<'EOF'
+[dependencies]
+agpl = { path = "../agpl" }
+EOF
+crate permissive MIT <<'EOF'
+[dependencies]
+middle = { path = "../middle" }
+EOF
+fails 'a transitive dependency' 'permissive (MIT) depends on agpl (AGPL-3.0-only)'
+fails 'the path of a transitive dependency' "\
+agpl v0.1.0 ($dir/crates/agpl)
+└── middle v0.1.0 ($dir/crates/middle)
+    └── permissive v0.1.0 ($dir/crates/permissive)"
+
+workspace optional
+crate agpl AGPL </dev/null
+crate permissive MIT <<'EOF'
+[dependencies]
+agpl = { path = "../agpl", optional = true }
+EOF
+fails 'an optional dependency' 'permissive (MIT) depends on agpl (AGPL-3.0-only)'
+
+workspace dual
+crate agpl AGPL </dev/null
+crate dual 'MIT OR AGPL-3.0-only' <<'EOF'
+[dependencies]
+agpl = { path = "../agpl" }
+EOF
+fails 'a crate under MIT or AGPL' 'dual (MIT OR AGPL-3.0-only) depends on agpl (AGPL-3.0-only)'
+
+workspace dev
+crate agpl AGPL </dev/null
+crate permissive MIT <<'EOF'
+[dev-dependencies]
+agpl = { path = "../agpl" }
+EOF
+passes 'a dev-dependency'
+
+workspace reverse
+crate permissive MIT </dev/null
+crate agpl AGPL <<'EOF'
+[dependencies]
+permissive = { path = "../permissive" }
+EOF
+passes 'an AGPL crate that depends on a permissive one'
+
+workspace on-dual
+crate dual 'MIT OR AGPL-3.0-only' </dev/null
+crate permissive MIT <<'EOF'
+[dependencies]
+dual = { path = "../dual" }
+EOF
+passes 'a dependency on a crate under MIT or AGPL'
+
+if [ "$failures" -gt 0 ]; then
+	echo "$failures of $count failed"
+	exit 1
+fi
+echo "all $count passed"
