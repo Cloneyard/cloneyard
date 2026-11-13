@@ -4,10 +4,10 @@ set -eu
 shipped_tree() {
 	crate=$1
 	shift
-	cargo tree -p "$crate" -e normal,build --target all --all-features "$@"
+	cargo tree --color never -p "$crate" -e normal,build --target all --all-features "$@"
 }
 
-members=$(cargo tree --workspace --depth 0 --prefix none -e normal -f '{l}|{p}')
+members=$(cargo tree --color never --workspace --depth 0 --prefix none -e normal -f '{l}|{p}')
 agpl_only='^AGPL-3\.0-(only|or-later)[|]'
 agpl=$(printf '%s\n' "$members" | grep -E "$agpl_only" || true)
 others=$(printf '%s\n' "$members" | grep -Ev -e "$agpl_only" -e '^$' || true)
