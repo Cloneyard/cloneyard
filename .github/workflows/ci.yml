@@ -20,24 +20,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install
-      - run: cargo fmt --check
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
+      - name: Check the formatting
+        run: cargo fmt --check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Lint with clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install
+      - name: Install the Rust toolchain
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked
+      - name: Run the tests
+        run: cargo test --locked
       - name: Check the home directory for test leaks
         run: |
           leaked=0
@@ -62,7 +68,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: npx --yes @fkrzski/docs-schema@0.6.0 docs
+      - name: Check the docs and the changelog
+        run: npx --yes @fkrzski/docs-schema@0.6.0 docs
 
   deps:
     runs-on: ubuntu-latest
