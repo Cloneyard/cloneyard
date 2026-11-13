@@ -76,3 +76,9 @@ jobs:
           tool: cargo-deny@0.20.2
       - name: Check licences, advisories, bans and sources
         run: cargo deny --locked check
+      - name: Lint the licence direction scripts
+        run: shellcheck scripts/check-licence-direction scripts/test-check-licence-direction
+      - name: Test the licence direction check
+        run: scripts/test-check-licence-direction
+      - name: Check the licence direction
+        run: scripts/check-licence-direction
