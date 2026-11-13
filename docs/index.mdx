@@ -1,0 +1,11 @@
+---
+title: Cloneyard
+description: An open-source platform for orchestrating coding agents, written in Rust, that starts on one machine with Claude Code.
+repository: https://github.com/Cloneyard/cloneyard
+crates: cloneyard
+status: experimental
+---
+
+Each node runs one daemon, which holds the node's data. Every client reaches the daemon only through its JSON-RPC API, the `cy` CLI included.
+
+Nothing is usable yet. The first milestone builds the skeleton: the daemon, its API and the node database. Agents come in the [milestones](https://github.com/Cloneyard/cloneyard/milestones) after it.

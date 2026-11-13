@@ -1,0 +1,49 @@
+---
+title: Getting started
+description: Build Cloneyard from source, start its daemon and check with cy ping that the daemon answers.
+---
+
+## Requirements
+
+- [rustup](https://rustup.rs): the first build installs the toolchain pinned in `rust-toolchain.toml`.
+- `XDG_RUNTIME_DIR` set to an absolute path, as a systemd login session does.
+
+<Aside type="caution">
+Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with `error: XDG_RUNTIME_DIR is not an absolute path, and the daemon socket lives there`.
+</Aside>
+
+## Build and run
+
+<Steps>
+
+1. Build the binaries:
+
+   ```bash
+   git clone https://github.com/Cloneyard/cloneyard.git
+   cd cloneyard
+   cargo build --release
+   ```
+
+   The build puts `cloneyard` and its short alias `cy` in `target/release/`.
+
+2. Start the daemon in one terminal:
+
+   ```bash
+   ./target/release/cy daemon
+   ```
+
+   It runs in the foreground until Ctrl+C or SIGTERM. Its socket is in `$XDG_RUNTIME_DIR/cloneyard/`. The node database is in `$XDG_DATA_HOME/cloneyard/`, or in `~/.local/share/cloneyard/` when `XDG_DATA_HOME` isn't an absolute path.
+
+3. Ping it from a second terminal:
+
+   ```bash
+   ./target/release/cy ping
+   ```
+
+   ```text frame="terminal" title="cy ping"
+   cloneyard 0.0.1, node 01M78NQX36NZR72XQAPW7YA49H, round trip 0.08 ms
+   ```
+
+   The node id stays the same after the daemon restarts.
+
+</Steps>

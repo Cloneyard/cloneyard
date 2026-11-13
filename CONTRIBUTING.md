@@ -42,4 +42,10 @@ cargo test --locked
 
 When you change a type in `cloneyard-api`, regenerate `schema/cloneyard.openrpc.json` with `UPDATE_SCHEMA=1 cargo test -p cloneyard-api --test schema` and commit it with the change.
 
+CI also checks `docs/` and `CHANGELOG.md`; that check needs only Node.js:
+
+```bash
+npx --yes @fkrzski/docs-schema@0.6.0 docs
+```
+
 Review checks the code against the rules in [`CODING_STANDARDS.md`](CODING_STANDARDS.md).
