@@ -23,7 +23,7 @@ import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-SPIKE_VERSION = "0.2.0"
+SPIKE_VERSION = "0.3.0"
 MIN_CC_FOR_OSC7501 = (2, 1, 295)
 PONG_PROMPT = "Reply with exactly one word: pong"
 MARK = "CY-MARK-7"
@@ -33,6 +33,11 @@ TELEMETRY_ENV = (
     "OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_ENDPOINT", "DISABLE_TELEMETRY",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
 )
+AUTH_ACCOUNT_IDS = {"orgId": "<org id>", "orgName": "<org name>"}
+OTEL_ACCOUNT_IDS = {
+    "organization.id": "<org id>", "user.account_uuid": "<account uuid>",
+    "user.account_id": "<account id>", "user.id": "<user id>",
+}
 
 # --------------------------------------------------------------------------- results
 
@@ -104,6 +109,7 @@ class Ctx:
         self.model_ok = None  # set by the model_probe test
         self.model_err = ""
         self.secrets = []
+        self.account_ids = {}
         self.repos = []  # (path, config_dir) to purge from Claude Code at the end
         tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
         if tok:
@@ -154,6 +160,8 @@ class Ctx:
         return d
 
     def mask(self, text):
+        for value, label in self.account_ids.items():
+            text = text.replace(value, label)
         for s in self.secrets:
             if s and len(s) > 8:
                 text = text.replace(s, s[:6] + "***")
@@ -1360,8 +1368,12 @@ def t_remote_control(ctx, r):
     return r.finish()
 
 
+def accounts_dirs(ctx):
+    return [os.path.abspath(os.path.expanduser(d)) for d in (ctx.args.accounts or "").split(",") if d.strip()]
+
+
 def t_accounts(ctx, r):
-    dirs = [os.path.abspath(os.path.expanduser(d)) for d in ctx.args.accounts.split(",") if d.strip()]
+    dirs = accounts_dirs(ctx)
     if len(dirs) < 2:
         return r.skip("pass two config dirs: --accounts DIR_A,DIR_B")
     infos = []
@@ -1435,6 +1447,39 @@ TESTS = [
 
 
 # --------------------------------------------------------------------------- main
+
+
+def _otel_account_ids(obj, found):
+    if isinstance(obj, dict):
+        key = obj.get("key")
+        label = OTEL_ACCOUNT_IDS.get(key) if isinstance(key, str) else None
+        if label and isinstance(obj.get("value"), dict):
+            value = _attr_value(obj["value"])
+            if isinstance(value, str) and value:
+                found[value] = label
+        for v in obj.values():
+            _otel_account_ids(v, found)
+    elif isinstance(obj, list):
+        for v in obj:
+            _otel_account_ids(v, found)
+
+
+def collect_account_ids(ctx):
+    dirs = [ctx.config_dir] + accounts_dirs(ctx) if ctx.claude else []
+    for d in dirs:
+        _, out, _, _ = run([ctx.claude, "auth", "status", "--json"], env=ctx.env(config_dir=d), timeout=30)
+        try:
+            st = json.loads(out)
+        except ValueError:
+            continue
+        if not isinstance(st, dict):
+            continue
+        for key, label in AUTH_ACCOUNT_IDS.items():
+            if st.get(key):
+                ctx.account_ids[str(st[key])] = label
+    for f in ctx.out.glob("*-otel.jsonl"):
+        for post in read_jsonl(f):
+            _otel_account_ids(post.get("data"), ctx.account_ids)
 
 
 def mask_tree(ctx):
@@ -1547,6 +1592,7 @@ def main():
             preflight_ok = False
         results.append(r)
         print(f"{chr(13) if tty else ''}  {tid:16} {r.status:5} {r.seconds:6.1f}s  {ctx.mask(r.summary)[:90]}")
+    collect_account_ids(ctx)
     write_report(ctx, results)
     mask_tree(ctx)
     if ctx.claude and not args.keep_cc_data:
