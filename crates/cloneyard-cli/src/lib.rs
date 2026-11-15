@@ -33,7 +33,6 @@ enum RpcCommand {
     Schema,
 }
 
-#[must_use]
 pub fn run() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Daemon => cloneyard_daemon::run(),
