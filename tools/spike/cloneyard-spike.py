@@ -674,6 +674,15 @@ class Pty:
         hit = self.wait_state_t(pred, timeout, since)
         return hit[1] if hit else None
 
+    def idle_for(self, seconds):
+        """True when the latest root reports are all idle, the first of them at least `seconds` ago."""
+        start = None
+        for t, r in reversed(self.timed_states()):
+            if r.get("state") != "idle":
+                break
+            start = t
+        return start is not None and time.time() - start >= seconds
+
     def size(self):
         with self.lock:
             return len(self.buf)
@@ -707,31 +716,31 @@ class Pty:
 
 
 DIALOGS = [
-    # (name, words that must all be on screen, ignoring spaces and case)
-    ("trust", ("trust", "folder")),
-    ("trust", ("trust", "proceed")),
-    ("theme", ("theme", "dark")),
-    ("remote-control", ("remotecontrol", "enable")),
-    ("continue", ("pressenter",)),
+    # (name, words that must all be on screen ignoring spaces and case, the row to pick or None for the default)
+    ("trust", ("trust", "folder"), "yes"),
+    ("trust", ("trust", "proceed"), "yes"),
+    ("theme", ("theme", "dark"), None),
+    ("renderer", ("fullscreenrenderer", "notnow"), "notnow"),
+    ("remote-control", ("remotecontrol", "enable"), None),
+    ("continue", ("pressenter",), None),
 ]
 CURSOR = ("\u276f", ">")  # the selected row of a menu starts with one of these
 
 
 def _selected_row(norm):
-    """Text right after the last menu cursor, e.g. 'no,exit' or 'yes,itrust...'."""
+    """Text right after the last menu cursor without its number, e.g. 'no,exit' or 'notnow'."""
     best = None
     for c in CURSOR:
         i = norm.rfind(c)
         if i >= 0 and (best is None or i > best):
             best = i
-    return norm[best + 1:best + 16] if best is not None else ""
+    return re.sub(r"^\d+\.", "", norm[best + 1:best + 16]) if best is not None else ""
 
 
-def _answer_trust(p, mark):
-    """Moves the trust menu to 'Yes' before Enter: some versions select 'No, exit' by default."""
+def _pick_row(p, mark, row):
+    """Moves the menu cursor down to the row starting with `row`, then presses Enter."""
     for _ in range(4):
-        row = _selected_row(re.sub(r"\s+", "", p.screen_since(mark).lower()))
-        if row.startswith("yes"):
+        if _selected_row(re.sub(r"\s+", "", p.screen_since(mark).lower())).startswith(row):
             break
         mark = p.size()
         p._write(b"\x1b[B")  # down
@@ -751,13 +760,13 @@ def handle_startup_dialogs(p, timeout, ready):
             return False, pressed
         if time.time() - last > 1.5:
             norm = re.sub(r"\s+", "", p.screen_since(mark).lower())
-            for name, words in DIALOGS:
+            for name, words, row in DIALOGS:
                 if all(w in norm for w in words) and pressed.count(name) < 2:
                     time.sleep(0.5)
                     start = mark
                     mark = p.size()
-                    if name == "trust":
-                        _answer_trust(p, start)
+                    if row:
+                        _pick_row(p, start, row)
                         mark = p.size()
                     else:
                         p._write(b"\r")
@@ -772,7 +781,7 @@ def trust_folder(ctx, folder, config_dir=None):
     """Accepts the trust dialog once, because `claude --bg` refuses an untrusted folder; no model call."""
     p = Pty([ctx.claude], ctx.env(pty=True, config_dir=config_dir), folder, ctx.out / "trust-pty.log")
     try:
-        ok, pressed = handle_startup_dialogs(p, 45, lambda: p.wait_state(lambda s: s.get("state") == "idle", 0))
+        ok, pressed = handle_startup_dialogs(p, 45, lambda: p.idle_for(2))
     finally:
         p.close()
     return ok, pressed
@@ -1216,7 +1225,7 @@ def t_osc7501(ctx, r):
     p = Pty(argv, ctx.env(pty=True), repo, ctx.out / "osc7501-pty.log")
     try:
         ready, pressed = handle_startup_dialogs(
-            p, 60, lambda: p.wait_state(lambda s: s.get("state") == "idle", 0))
+            p, 60, lambda: p.idle_for(2))
         r.data["startup_screens_answered"] = pressed
         r.check("claude stayed up during startup", p.exit_status is None,
                 "exited early, see the screen below and osc7501-screen.txt")
