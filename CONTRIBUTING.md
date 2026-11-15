@@ -64,3 +64,7 @@ cargo build --locked --workspace --target x86_64-unknown-linux-musl
 ```
 
 Review checks the code against the rules in [`CODING_STANDARDS.md`](CODING_STANDARDS.md).
+
+## After a Claude Code update
+
+Run the [Claude Code contract test](tools/spike/README.md), which checks that Claude Code still does what Cloneyard relies on.
