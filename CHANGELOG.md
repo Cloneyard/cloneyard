@@ -15,5 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `node.toml` in `$XDG_CONFIG_HOME/cloneyard/` sets the daemon's log level, which `RUST_LOG` overrides ([#2](https://github.com/Cloneyard/cloneyard/issues/2)).
 - The node database in `$XDG_DATA_HOME/cloneyard/`, backed up before it is migrated ([#3](https://github.com/Cloneyard/cloneyard/issues/3)).
 - `cy rpc schema` prints the OpenRPC document of the API ([#4](https://github.com/Cloneyard/cloneyard/issues/4)).
+- `cy project add <path>` adds a git repo as a project, and `cy projects` lists the projects with their paths ([#25](https://github.com/Cloneyard/cloneyard/issues/25)).
+- The API's methods have errors of their own, with codes from 1000 and their fields as data ([#25](https://github.com/Cloneyard/cloneyard/issues/25)).
 
 [Unreleased]: https://github.com/Cloneyard/cloneyard/commits/master
