@@ -8,19 +8,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use cloneyard_store::Store;
 use tokio::net::UnixListener;
 use tokio::task::JoinSet;
-use ulid::Ulid;
 
+use crate::node::Node;
 use crate::{paths, router};
 
 /// A daemon that holds the single-instance locks, has the node's database open and listens on its socket.
 pub struct Daemon {
     listener: UnixListener,
     socket: PathBuf,
-    node_id: Ulid,
-    store: Store,
+    node: Node,
     data_lock: File,
     runtime_lock: File,
 }
@@ -42,8 +40,7 @@ impl Daemon {
         let Some(data_lock) = try_lock(&paths::data_lock(data_dir))? else {
             bail!("another cloneyard daemon is using {}", data_dir.display());
         };
-        let store = Store::open(&paths::database(data_dir)).await?;
-        let node_id = store.node_id().await?;
+        let node = Node::open(&paths::database(data_dir)).await?;
 
         // Only the lock holder gets here, so a socket left on disk is stale.
         match fs::remove_file(&socket) {
@@ -58,8 +55,7 @@ impl Daemon {
         Ok(Self {
             listener,
             socket,
-            node_id,
-            store,
+            node,
             data_lock,
             runtime_lock,
         })
@@ -79,12 +75,13 @@ impl Daemon {
         let Self {
             listener,
             socket,
-            node_id,
-            store,
+            node,
             data_lock,
             runtime_lock,
         } = self;
-        let router = Arc::new(router::router(node_id));
+        let node_id = node.id;
+        let node = Arc::new(node);
+        let router = Arc::new(router::router(Arc::clone(&node)));
         let mut connections = JoinSet::new();
         let mut shutdown = pin!(shutdown);
         tracing::info!(
@@ -119,11 +116,12 @@ impl Daemon {
         }
 
         connections.shutdown().await;
+        drop(router);
         drop(listener);
         let removed =
             fs::remove_file(&socket).with_context(|| format!("cannot remove {}", socket.display()));
         // Locks go last, so a new daemon never takes over a socket or database that is still in use.
-        drop(store);
+        drop(node);
         drop(data_lock);
         drop(runtime_lock);
         removed?;

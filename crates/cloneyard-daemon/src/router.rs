@@ -1,14 +1,16 @@
 use std::future;
+use std::sync::Arc;
 
 use cloneyard_api::rpc::Discover;
 use cloneyard_api::system::{Ping, PingResult, Version, VersionResult};
 use cloneyard_rpc::Router;
-use ulid::Ulid;
 
-pub(crate) fn router(node_id: Ulid) -> Router {
+use crate::node::Node;
+
+pub(crate) fn router(node: Arc<Node>) -> Router {
     let document = cloneyard_api::document();
     Router::new()
-        .handle::<Ping>(move |()| async move { Ok(PingResult { node_id }) })
+        .handle::<Ping>(move |()| future::ready(Ok(PingResult { node_id: node.id })))
         .handle::<Version>(|()| async {
             Ok(VersionResult {
                 version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -18,13 +20,37 @@ pub(crate) fn router(node_id: Ulid) -> Router {
 }
 
 #[cfg(test)]
-mod tests {
-    use ulid::Ulid;
+pub(crate) mod tests {
+    use std::sync::Arc;
+
+    use cloneyard_api::system::Ping;
+    use cloneyard_rpc::Client;
+    use tempfile::TempDir;
+    use tokio::io::{DuplexStream, ReadHalf, WriteHalf, duplex, split};
 
     use super::router;
+    use crate::node::Node;
 
-    #[test]
-    fn serves_exactly_the_methods_in_the_document() {
+    pub(crate) type TestClient = Client<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
+
+    pub(crate) async fn open_node(dir: &TempDir) -> Arc<Node> {
+        Arc::new(Node::open(&dir.path().join("cloneyard.db")).await.unwrap())
+    }
+
+    pub(crate) fn connect(node: Arc<Node>) -> TestClient {
+        let router = router(node);
+        let (client, server) = duplex(64 * 1024);
+        tokio::spawn(async move {
+            let (reader, writer) = split(server);
+            cloneyard_rpc::serve(&router, reader, writer).await
+        });
+        let (reader, writer) = split(client);
+        Client::new(reader, writer)
+    }
+
+    #[tokio::test]
+    async fn serves_exactly_the_methods_in_the_document() {
+        let dir = TempDir::new().unwrap();
         let mut documented: Vec<String> = cloneyard_api::document()
             .methods
             .into_iter()
@@ -32,6 +58,19 @@ mod tests {
             .collect();
         documented.sort_unstable();
 
-        assert_eq!(router(Ulid::nil()).methods(), documented);
+        assert_eq!(router(open_node(&dir).await).methods(), documented);
+    }
+
+    #[tokio::test]
+    async fn answers_ping_with_the_id_of_the_node() {
+        let dir = TempDir::new().unwrap();
+        let node = open_node(&dir).await;
+
+        let ping = connect(Arc::clone(&node))
+            .request::<Ping>(())
+            .await
+            .unwrap();
+
+        assert_eq!(ping.node_id, node.id);
     }
 }
