@@ -15,6 +15,7 @@ tokio = { workspace = true, features = ["io-util"] }
 tracing.workspace = true
 
 [dev-dependencies]
+schemars.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 
 [lints]
