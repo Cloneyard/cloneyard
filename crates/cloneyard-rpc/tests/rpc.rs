@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cloneyard_api::Method;
+use cloneyard_api::{Method, NoError};
 use cloneyard_rpc::{Client, ClientError, Error, Router, serve};
 use serde_json::{Value, json};
 use tokio::io::{
@@ -14,6 +14,7 @@ impl Method for Sum {
     const NAME: &'static str = "test.sum";
     type Params = (i64, i64);
     type Result = i64;
+    type Error = NoError;
 }
 
 fn router() -> Router {

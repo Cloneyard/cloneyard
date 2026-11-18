@@ -83,6 +83,24 @@ fn leaves_no_schema_or_definitions_key() {
 }
 
 #[test]
+fn describes_a_method_without_params_or_errors_without_a_param_structure_or_errors() {
+    let document = document();
+
+    assert_eq!(
+        *method(&document, "system.ping"),
+        json!({
+            "name": "system.ping",
+            "summary": "Returns the node id, to check that the daemon answers",
+            "params": [],
+            "result": {
+                "name": "PingResult",
+                "schema": {"$ref": "#/components/schemas/PingResult"}
+            }
+        })
+    );
+}
+
+#[test]
 fn describes_rpc_discover_as_the_openrpc_spec_does() {
     let document = document();
 
