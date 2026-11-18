@@ -98,6 +98,8 @@ pub fn document() -> Document {
         method::<system::Ping>(&mut generator),
         method::<system::Version>(&mut generator),
         method::<rpc::Discover>(&mut generator),
+        method::<project::Add>(&mut generator),
+        method::<project::List>(&mut generator),
     ];
     Document {
         openrpc: "1.4.1".to_owned(),

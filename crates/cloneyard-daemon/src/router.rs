@@ -1,22 +1,44 @@
 use std::future;
 use std::sync::Arc;
 
+use cloneyard_api::project::{Add, List};
 use cloneyard_api::rpc::Discover;
 use cloneyard_api::system::{Ping, PingResult, Version, VersionResult};
-use cloneyard_rpc::Router;
+use cloneyard_rpc::{Error, HandlerError, Router};
 
 use crate::node::Node;
+use crate::project;
 
 pub(crate) fn router(node: Arc<Node>) -> Router {
     let document = cloneyard_api::document();
+    let node_id = node.id;
     Router::new()
-        .handle::<Ping>(move |()| future::ready(Ok(PingResult { node_id: node.id })))
+        .handle::<Ping>(move |()| future::ready(Ok(PingResult { node_id })))
         .handle::<Version>(|()| async {
             Ok(VersionResult {
                 version: env!("CARGO_PKG_VERSION").to_owned(),
             })
         })
+        .handle::<Add>({
+            let node = Arc::clone(&node);
+            move |params| {
+                let node = Arc::clone(&node);
+                async move { reply(project::add(&node, params).await) }
+            }
+        })
+        .handle::<List>(move |()| {
+            let node = Arc::clone(&node);
+            async move { reply(project::list(&node).await.map(Ok)) }
+        })
         .handle::<Discover>(move |()| future::ready(Ok(document.clone())))
+}
+
+/// Sends a method's own error with its code, and any other failure as -32603.
+fn reply<T, E>(result: anyhow::Result<Result<T, E>>) -> Result<T, HandlerError<E>> {
+    match result {
+        Ok(reply) => reply.map_err(HandlerError::Method),
+        Err(error) => Err(HandlerError::Rpc(Error::internal(format!("{error:#}")))),
+    }
 }
 
 #[cfg(test)]

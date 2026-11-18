@@ -6,7 +6,6 @@ use ulid::Ulid;
 /// The state of the node that the handlers share: its id and its database.
 pub(crate) struct Node {
     pub(crate) id: Ulid,
-    #[expect(dead_code, reason = "the project handlers read it")]
     pub(crate) store: Store,
 }
 

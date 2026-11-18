@@ -4,6 +4,7 @@ mod config;
 mod daemon;
 mod node;
 pub mod paths;
+mod project;
 mod router;
 mod run;
 
