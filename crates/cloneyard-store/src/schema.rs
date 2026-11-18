@@ -8,7 +8,10 @@ use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations, SchemaVersion};
 
 pub(crate) fn migrations() -> Vec<M<'static>> {
-    vec![M::up(include_str!("../migrations/0001-initial.sql"))]
+    vec![
+        M::up(include_str!("../migrations/0001-initial.sql")),
+        M::up(include_str!("../migrations/0002-repo-path.sql")),
+    ]
 }
 
 pub(crate) fn open(path: &Path, migrations: Vec<M<'static>>) -> anyhow::Result<Connection> {
@@ -90,6 +93,10 @@ mod tests {
         open(&dir.path().join("cloneyard.db"), migrations()).unwrap()
     }
 
+    fn v1() -> Vec<M<'static>> {
+        migrations().into_iter().take(1).collect()
+    }
+
     fn pragma<T: FromSql>(connection: &Connection, name: &str) -> T {
         connection
             .pragma_query_value(None, name, |row| row.get(0))
@@ -155,16 +162,23 @@ mod tests {
 
         let connection = open_latest(&dir);
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 1);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 2);
         assert_eq!(pragma::<String>(&connection, "journal_mode"), "wal");
         assert_eq!(pragma::<i64>(&connection, "foreign_keys"), 1);
         assert!(!dir.path().join("backups").exists());
     }
 
     #[test]
-    fn backs_up_a_database_before_migrating_it_and_keeps_its_rows() {
+    fn backs_up_a_v1_database_before_migrating_it_and_keeps_its_rows() {
         let dir = TempDir::new().unwrap();
-        let connection = with_projects(&dir);
+        let path = dir.path().join("cloneyard.db");
+        let connection = open(&path, v1()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO project (id, name) VALUES (?1, 'cloneyard')",
+                [PROJECT],
+            )
+            .unwrap();
         add_repo(
             &connection,
             "01K9Z3V6Y8Q2N5M7P4R1T0W3Y0",
@@ -174,15 +188,17 @@ mod tests {
         )
         .unwrap();
         drop(connection);
-        let mut next = migrations();
-        next.push(M::up("ALTER TABLE repo ADD COLUMN default_branch TEXT;"));
         let before = unix_seconds();
 
-        let connection = open(&dir.path().join("cloneyard.db"), next).unwrap();
+        let connection = open(&path, migrations()).unwrap();
 
         let after = unix_seconds();
         let expected = vec![("cloneyard".to_owned(), "api".to_owned())];
         assert_eq!(pragma::<i64>(&connection, "user_version"), 2);
+        let paths: i64 = connection
+            .query_row("SELECT count(*) FROM repo_path", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(paths, 0);
         assert_eq!(repos(&connection), expected);
         let [backup] = backups(&dir).try_into().unwrap();
         let name = backup.file_name().unwrap().to_str().unwrap();
@@ -211,13 +227,13 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "database schema v3 is newer than this cloneyard (v1); \
+                "database schema v4 is newer than this cloneyard (v2); \
                  upgrade cloneyard or restore a file from {}",
                 dir.path().join("backups").display()
             )
         );
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 3);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
     }
 
     #[test]

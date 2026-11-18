@@ -214,6 +214,7 @@ name = "cloneyard-store"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "cloneyard-api",
  "rusqlite",
  "rusqlite_migration",
  "tempfile",
