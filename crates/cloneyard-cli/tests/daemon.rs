@@ -1,7 +1,9 @@
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -95,6 +97,26 @@ fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
 fn stderr_of_failure(output: &Output) -> String {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     String::from_utf8(output.stderr.clone()).unwrap()
+}
+
+fn stdout_of_success(output: &Output) -> String {
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout.clone()).unwrap()
+}
+
+/// A new git repo at `path`, given as its canonical path.
+fn repo(path: &Path) -> PathBuf {
+    let status = Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    fs::canonicalize(path).unwrap()
+}
+
+fn project_add(node: &Node, path: &Path) -> Output {
+    node.cy("project").arg("add").arg(path).output().unwrap()
 }
 
 /// The node id in `cloneyard <version>, node <id>, round trip <ms> ms`.
@@ -305,4 +327,143 @@ fn keeps_the_database_in_home_when_xdg_data_home_is_relative() {
 
     let database = node.home.path().join(".local/share/cloneyard/cloneyard.db");
     assert!(database.exists(), "{}", database.display());
+}
+
+#[test]
+fn project_add_adds_the_current_directory_and_prints_the_name_and_id_of_the_project() {
+    let node = Node::new();
+    let app = repo(&node.home.path().join("app"));
+    let _daemon = node.start_daemon();
+
+    let output = node
+        .cy("project")
+        .args(["add", "."])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+
+    let stdout = stdout_of_success(&output);
+    let id = stdout
+        .strip_prefix("added project app (")
+        .and_then(|rest| rest.strip_suffix(")\n"))
+        .unwrap_or_else(|| panic!("unexpected output: {stdout:?}"));
+    assert_eq!(id.len(), 26, "{id}");
+}
+
+#[test]
+fn projects_lists_the_projects_with_their_paths_after_a_restart() {
+    let node = Node::new();
+    let web = repo(&node.home.path().join("web"));
+    let api = repo(&node.home.path().join("code").join("api"));
+    let daemon = node.start_daemon();
+    stdout_of_success(&project_add(&node, &web));
+    stdout_of_success(
+        &node
+            .cy("project")
+            .arg("add")
+            .arg(&api)
+            .args(["--name", "backend"])
+            .output()
+            .unwrap(),
+    );
+    assert!(daemon.terminate().success());
+    let _daemon = node.start_daemon();
+
+    let stdout = stdout_of_success(&node.cy("projects").output().unwrap());
+
+    assert_eq!(
+        stdout,
+        format!("backend  {}\nweb      {}\n", api.display(), web.display())
+    );
+}
+
+#[test]
+fn projects_prints_nothing_without_projects() {
+    let node = Node::new();
+    let _daemon = node.start_daemon();
+
+    let stdout = stdout_of_success(&node.cy("projects").output().unwrap());
+
+    assert_eq!(stdout, "");
+}
+
+#[test]
+fn project_add_names_the_path_that_is_not_in_a_git_working_tree() {
+    let node = Node::new();
+    let notes = node.home.path().join("notes");
+    fs::create_dir(&notes).unwrap();
+    let _daemon = node.start_daemon();
+
+    let stderr = stderr_of_failure(&project_add(&node, &notes));
+
+    assert_eq!(
+        stderr,
+        format!("error: {} is not in a git working tree\n", notes.display())
+    );
+}
+
+#[test]
+fn project_add_names_the_project_that_has_the_repo_already() {
+    let node = Node::new();
+    let app = repo(&node.home.path().join("app"));
+    let _daemon = node.start_daemon();
+    stdout_of_success(&project_add(&node, &app));
+
+    let output = node
+        .cy("project")
+        .arg("add")
+        .arg(&app)
+        .args(["--name", "other"])
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        stderr_of_failure(&output),
+        format!("error: {} is already in project app\n", app.display())
+    );
+}
+
+#[test]
+fn project_add_names_the_project_whose_name_is_taken() {
+    let node = Node::new();
+    let first = repo(&node.home.path().join("code").join("app"));
+    let second = repo(&node.home.path().join("work").join("app"));
+    let _daemon = node.start_daemon();
+    stdout_of_success(&project_add(&node, &first));
+
+    let stderr = stderr_of_failure(&project_add(&node, &second));
+
+    assert_eq!(stderr, "error: project app already exists\n");
+}
+
+#[test]
+fn project_add_fails_as_an_internal_error_when_the_daemon_finds_no_git() {
+    let node = Node::new();
+    let app = repo(&node.home.path().join("app"));
+    let mut daemon = node.cy("daemon");
+    daemon.env("PATH", node.home.path().join("empty"));
+    let _daemon = node.spawn(daemon);
+
+    let stderr = stderr_of_failure(&project_add(&node, &app));
+
+    assert_eq!(
+        stderr,
+        format!(
+            "error: Internal error (-32603): cannot run git in {}: No such file or directory (os error 2)\n",
+            app.display()
+        )
+    );
+}
+
+#[test]
+fn project_add_refuses_a_path_that_is_not_utf_8() {
+    let node = Node::new();
+    let path = node.home.path().join(OsStr::from_bytes(b"caf\xe9"));
+
+    let stderr = stderr_of_failure(&project_add(&node, &path));
+
+    assert_eq!(
+        stderr,
+        format!("error: {} is not valid UTF-8\n", path.display())
+    );
 }
