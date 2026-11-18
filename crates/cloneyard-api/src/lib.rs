@@ -12,6 +12,7 @@ use crate::rpc::{
     Components, ContentDescriptor, Document, ErrorObject, Info, MethodObject, ParamStructure,
 };
 
+pub mod project;
 pub mod rpc;
 pub mod system;
 
