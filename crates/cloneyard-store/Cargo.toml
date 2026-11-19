@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+cloneyard-api.workspace = true
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 rusqlite_migration = "2.7.0"
 tokio = { workspace = true, features = ["sync"] }

@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::Method;
+use crate::{Method, NoError};
 
 pub struct Ping;
 
@@ -12,6 +12,7 @@ impl Method for Ping {
         Some("Returns the node id, to check that the daemon answers");
     type Params = ();
     type Result = PingResult;
+    type Error = NoError;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -28,6 +29,7 @@ impl Method for Version {
     const SUMMARY: Option<&'static str> = Some("Returns the version of the daemon");
     type Params = ();
     type Result = VersionResult;
+    type Error = NoError;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

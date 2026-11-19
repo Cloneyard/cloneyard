@@ -1,5 +1,6 @@
 use std::fmt;
 
+use cloneyard_api::MethodError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -49,8 +50,17 @@ impl Error {
         Self::new(Self::INVALID_PARAMS, "Invalid params").with_data(detail.to_string())
     }
 
-    pub(crate) fn internal(detail: impl fmt::Display) -> Self {
+    /// -32603, for a failure that is not one of the method's own errors.
+    #[must_use]
+    pub fn internal(detail: impl fmt::Display) -> Self {
         Self::new(Self::INTERNAL_ERROR, "Internal error").with_data(detail.to_string())
+    }
+
+    pub(crate) fn method<E: MethodError>(error: &E) -> Self {
+        match error.encode() {
+            Some((code, fields)) => Self::new(code.code, code.message).with_data(fields),
+            None => Self::internal(format!("no error code for {error:?}")),
+        }
     }
 }
 
@@ -66,3 +76,35 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use cloneyard_api::{ErrorCode, MethodError};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    use super::Error;
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema, thiserror::Error)]
+    enum Unlisted {
+        #[error("lost {name}")]
+        Lost { name: String },
+    }
+
+    impl MethodError for Unlisted {
+        const ERRORS: &'static [ErrorCode] = &[];
+    }
+
+    #[test]
+    fn sends_a_method_error_without_a_code_as_an_internal_error() {
+        let error = Error::method(&Unlisted::Lost {
+            name: "app".to_owned(),
+        });
+
+        assert_eq!(
+            error,
+            Error::new(Error::INTERNAL_ERROR, "Internal error")
+                .with_data("no error code for Lost { name: \"app\" }")
+        );
+    }
+}

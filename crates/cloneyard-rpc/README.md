@@ -5,9 +5,9 @@ JSON-RPC 2.0 with one message per line (NDJSON), over any byte stream: the daemo
 ## Scope
 
 - The message types and the standard error codes.
-- `Router`: method names mapped to async handlers with typed params and results; `Router::handle::<M>` takes a method from `cloneyard-api`, so the handler can't drift from its types.
+- `Router`: method names mapped to async handlers with typed params and results; `Router::handle::<M>` takes a method from `cloneyard-api`, so the handler can't drift from its types, and sends a `HandlerError::Method` with its code and its fields as data.
 - `serve`: answers requests on a reader and writer pair until the reader ends.
-- `Client`: calls methods one at a time over the same kind of pair; `Client::request::<M>` takes a method from `cloneyard-api`.
+- `Client`: calls methods one at a time over the same kind of pair; `Client::request::<M>` takes a method from `cloneyard-api` and gives back its own errors as `ClientError::Method`.
 
 ## Out of scope
 

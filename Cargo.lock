@@ -160,6 +160,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "thiserror",
  "ulid",
 ]
 
@@ -200,6 +201,7 @@ name = "cloneyard-rpc"
 version = "0.0.1"
 dependencies = [
  "cloneyard-api",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror",
@@ -212,6 +214,7 @@ name = "cloneyard-store"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "cloneyard-api",
  "rusqlite",
  "rusqlite_migration",
  "tempfile",

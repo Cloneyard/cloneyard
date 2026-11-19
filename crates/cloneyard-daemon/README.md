@@ -7,7 +7,8 @@ The `cloneyard daemon` process on a node: it reads the node's settings, holds th
 - The settings in `$XDG_CONFIG_HOME/cloneyard/node.toml`, or `~/.config/cloneyard/node.toml`; a missing file means the defaults.
 - The runtime dir `$XDG_RUNTIME_DIR/cloneyard/`, mode 0700, with `daemon.sock` and `daemon.lock`.
 - The data dir `$XDG_DATA_HOME/cloneyard/`, or `~/.local/share/cloneyard/`, mode 0700, with `cloneyard.db`, `cloneyard.lock` and `backups/`.
-- The `system.*` methods and `rpc.discover`, registered through their types in `cloneyard-api`; `system.ping` answers with the node id, and `rpc.discover` with the OpenRPC document.
+- The `system.*` and `project.*` methods and `rpc.discover`, registered through their types in `cloneyard-api` on the node's id and database, which the handlers share; `system.ping` answers with the node id, and `rpc.discover` with the OpenRPC document.
+- `project.add` takes the repo at the top level that `git rev-parse --show-toplevel` finds for the path, with symlinks resolved, so it needs `git` on its `PATH`.
 - Logs through `tracing` to stderr, and a clean shutdown on SIGTERM and SIGINT.
 
 ```toml

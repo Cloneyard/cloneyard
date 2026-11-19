@@ -12,7 +12,7 @@ cloneyard-api.workspace = true
 cloneyard-rpc.workspace = true
 cloneyard-store.workspace = true
 serde.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio = { workspace = true, features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "time"] }
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

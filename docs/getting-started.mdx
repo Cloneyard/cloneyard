@@ -1,11 +1,12 @@
 ---
 title: Getting started
-description: Build Cloneyard from source, start its daemon and check with cy ping that the daemon answers.
+description: Build Cloneyard from source, start its daemon, check with cy ping that it answers and add a git repo as a project.
 ---
 
 ## Requirements
 
 - [rustup](https://rustup.rs): the first build installs the toolchain pinned in `rust-toolchain.toml`.
+- `git` on the daemon's `PATH`, which finds the top level of a repo you add.
 - `XDG_RUNTIME_DIR` set to an absolute path, as a systemd login session does.
 
 <Aside type="caution">
@@ -45,5 +46,29 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
    ```
 
    The node id stays the same after the daemon restarts.
+
+4. Add the clone as a project:
+
+   ```bash
+   ./target/release/cy project add .
+   ```
+
+   ```text frame="terminal" title="cy project add ."
+   added project cloneyard (01M7R5WVZ8JTATRW81TQGTBJHD)
+   ```
+
+   A path inside a repo adds the repo at its top level. The project takes the name of the repo's directory, or the one given with `--name`.
+
+5. List the projects:
+
+   ```bash
+   ./target/release/cy projects
+   ```
+
+   ```text frame="terminal" title="cy projects"
+   cloneyard  /home/you/cloneyard
+   ```
+
+   Adding a repo that is already in a project, or a path outside a git working tree, fails with a message that names the path.
 
 </Steps>

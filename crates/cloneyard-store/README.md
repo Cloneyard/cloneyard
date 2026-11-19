@@ -7,8 +7,9 @@ A SQLite database on a thread of its own: the node's `cloneyard.db`, and any oth
 - `Store::open`: opens or creates the file in WAL mode with foreign keys on, and migrates it to the latest schema.
 - A `VACUUM INTO` copy in `backups/` beside the file, before new migrations run on a database that has a schema.
 - A refusal to open a database whose schema is newer than the binary, which points at `backups/`.
-- The tables `meta`, `change_log`, `project` and `repo`, in `migrations/`.
+- The tables `meta`, `change_log`, `project`, `repo` and `repo_path`, in `migrations/`.
 - The node id, created the first time it is asked for.
+- Projects with their repos and the repos' paths on a node; a new project, its repo and its path go in one transaction.
 
 ## Out of scope
 

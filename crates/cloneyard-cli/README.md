@@ -6,8 +6,9 @@ The `cloneyard` binary and its short alias `cy`: a thin client of the daemon, an
 
 - `cy daemon` runs the daemon in the foreground until SIGTERM or Ctrl+C.
 - `cy ping` prints the daemon's version, the node id and the round-trip time of one call.
+- `cy project add <path> [--name <name>]` adds the git repo at the path as a project and prints its name and id; `cy projects` lists the projects with the paths of their repos.
 - `cy rpc schema` prints the OpenRPC document that the daemon serves, in the format of `schema/cloneyard.openrpc.json`.
 
 ## Out of scope
 
-- Logic behind the commands: each one calls the daemon's API and prints the answer.
+- Logic behind the commands: each one calls the daemon's API and prints the answer, or the method's own error with exit code 1.

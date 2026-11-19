@@ -4,7 +4,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::Method;
+use crate::{Method, NoError};
 
 /// `rpc.discover`, as the OpenRPC spec defines it.
 pub struct Discover;
@@ -15,6 +15,7 @@ impl Method for Discover {
         Some("Returns an OpenRPC schema as a description of this service");
     type Params = ();
     type Result = Document;
+    type Error = NoError;
 }
 
 /// An OpenRPC document, with its fields in the order of the spec.
@@ -41,12 +42,39 @@ pub struct MethodObject {
     pub description: Option<String>,
     pub params: Vec<ContentDescriptor>,
     pub result: ContentDescriptor,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ErrorObject>,
+    #[serde(
+        default,
+        rename = "paramStructure",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub param_structure: Option<ParamStructure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContentDescriptor {
     pub name: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
     pub schema: Schema,
+}
+
+/// An error a method returns of its own.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ErrorObject {
+    pub code: i64,
+    pub message: String,
+    /// The schema of the fields the error carries, since OpenRPC has no other place for one.
+    pub data: Schema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ParamStructure {
+    ByName,
+    ByPosition,
+    Either,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

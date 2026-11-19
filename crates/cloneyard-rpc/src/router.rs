@@ -12,18 +12,27 @@ use crate::Error;
 type Reply = Pin<Box<dyn Future<Output = Result<Value, Error>> + Send>>;
 type BoxedHandler = Box<dyn Fn(Value) -> Reply + Send + Sync>;
 
-/// An async function from params `P` to a result `R`, such as `|(): ()| async { Ok(1) }`.
+/// An async function from params `P` to a result `R` or an error `E` of its own, such as `|(): ()| async { Ok(1) }`.
 // `Fn` is the supertrait so that a closure passed as `impl Handler` gets its argument type from `P`.
-pub trait Handler<P, R>: Fn(P) -> Self::Reply + Send + Sync + 'static {
-    type Reply: Future<Output = Result<R, Error>> + Send + 'static;
+pub trait Handler<P, R, E>: Fn(P) -> Self::Reply + Send + Sync + 'static {
+    type Reply: Future<Output = Result<R, HandlerError<E>>> + Send + 'static;
 }
 
-impl<P, R, F, Fut> Handler<P, R> for F
+impl<P, R, E, F, Fut> Handler<P, R, E> for F
 where
     F: Fn(P) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<R, Error>> + Send + 'static,
+    Fut: Future<Output = Result<R, HandlerError<E>>> + Send + 'static,
 {
     type Reply = Fut;
+}
+
+/// How a handler of a method from `cloneyard-api` fails.
+#[derive(Debug)]
+pub enum HandlerError<E> {
+    /// One of the method's own errors, which goes out with its code and its fields as data.
+    Method(E),
+    /// Any other failure, which goes out as this error object, usually [`Error::internal`].
+    Rpc(Error),
 }
 
 #[derive(Default)]
@@ -37,10 +46,18 @@ impl Router {
         Self::default()
     }
 
-    /// Adds `M`, whose handler takes its params and returns its result.
+    /// Adds `M`, whose handler takes its params and returns its result or one of its errors.
     #[must_use]
-    pub fn handle<M: Method>(self, handler: impl Handler<M::Params, M::Result>) -> Self {
-        self.method(M::NAME, handler)
+    pub fn handle<M: Method>(self, handler: impl Handler<M::Params, M::Result, M::Error>) -> Self {
+        self.method(M::NAME, move |params| {
+            let reply = handler(params);
+            async move {
+                reply.await.map_err(|error| match error {
+                    HandlerError::Method(error) => Error::method(&error),
+                    HandlerError::Rpc(error) => error,
+                })
+            }
+        })
     }
 
     /// The names of the methods this router answers, sorted.

@@ -1,6 +1,6 @@
 use std::io;
 
-use cloneyard_api::Method;
+use cloneyard_api::{Method, MethodError, NoError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -17,8 +17,9 @@ pub struct Client<R, W> {
     next_id: i64,
 }
 
+/// Why a call failed; `E` holds the errors of the method itself.
 #[derive(Debug, thiserror::Error)]
-pub enum ClientError {
+pub enum ClientError<E = NoError> {
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error("the connection closed before the response")]
@@ -29,6 +30,8 @@ pub enum ClientError {
     InvalidResponse(serde_json::Error),
     #[error(transparent)]
     Rpc(#[from] Error),
+    #[error(transparent)]
+    Method(E),
 }
 
 impl<R, W> Client<R, W>
@@ -48,12 +51,19 @@ where
     ///
     /// # Errors
     ///
-    /// As [`Client::call`].
+    /// Returns [`ClientError::Method`] with one of the method's own errors, or fails as [`Client::call`] otherwise.
     pub async fn request<M: Method>(
         &mut self,
         params: M::Params,
-    ) -> Result<M::Result, ClientError> {
-        self.call(M::NAME, params).await
+    ) -> Result<M::Result, ClientError<M::Error>> {
+        match self.round_trip(M::NAME, params).await? {
+            Ok(value) => serde_json::from_value(value).map_err(ClientError::InvalidResponse),
+            Err(error) => Err(match M::Error::decode(error.code, error.data.clone()) {
+                Some(Ok(error)) => ClientError::Method(error),
+                Some(Err(invalid)) => ClientError::InvalidResponse(invalid),
+                None => ClientError::Rpc(error),
+            }),
+        }
     }
 
     /// Calls `method`; params that serialize to `null`, like `()`, are left out.
@@ -67,6 +77,18 @@ where
         P: Serialize,
         T: DeserializeOwned,
     {
+        match self.round_trip(method, params).await? {
+            Ok(value) => serde_json::from_value(value).map_err(ClientError::InvalidResponse),
+            Err(error) => Err(ClientError::Rpc(error)),
+        }
+    }
+
+    /// Sends one request and gives the result or the error object that answers it.
+    async fn round_trip<P: Serialize, E>(
+        &mut self,
+        method: &str,
+        params: P,
+    ) -> Result<Result<Value, Error>, ClientError<E>> {
         let id = Id::Number(self.next_id.into());
         self.next_id += 1;
         let params = match serde_json::to_value(params).map_err(ClientError::Params)? {
@@ -96,12 +118,10 @@ where
             if response.id != id && response.id != Id::Null {
                 continue;
             }
-            return match response.outcome {
-                Outcome::Result(value) => {
-                    serde_json::from_value(value).map_err(ClientError::InvalidResponse)
-                }
-                Outcome::Error(error) => Err(ClientError::Rpc(error)),
-            };
+            return Ok(match response.outcome {
+                Outcome::Result(value) => Ok(value),
+                Outcome::Error(error) => Err(error),
+            });
         }
     }
 }

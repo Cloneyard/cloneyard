@@ -37,10 +37,135 @@
           "$ref": "https://raw.githubusercontent.com/open-rpc/meta-schema/master/schema.json"
         }
       }
+    },
+    {
+      "name": "project.add",
+      "summary": "Adds the git repo at a path as a project with that one repo",
+      "params": [
+        {
+          "name": "name",
+          "schema": {
+            "description": "The name of the project, or the name of the repo's directory when left out.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "description": "An absolute path in the repo's working tree, such as its top level or a directory inside it.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "Project",
+        "schema": {
+          "$ref": "#/components/schemas/Project"
+        }
+      },
+      "errors": [
+        {
+          "code": 1000,
+          "message": "Path is not absolute",
+          "data": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "code": 1001,
+          "message": "Path is not in a git working tree",
+          "data": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "code": 1002,
+          "message": "Repo is already in a project",
+          "data": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "description": "The top level of the repo.",
+                "type": "string"
+              },
+              "project": {
+                "description": "The name of the project the repo is in.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "project"
+            ]
+          }
+        },
+        {
+          "code": 1003,
+          "message": "Project name is taken",
+          "data": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      ],
+      "paramStructure": "by-name"
+    },
+    {
+      "name": "project.list",
+      "summary": "Returns the projects with their repos on this node",
+      "params": [],
+      "result": {
+        "name": "ListResult",
+        "schema": {
+          "$ref": "#/components/schemas/ListResult"
+        }
+      }
     }
   ],
   "components": {
     "schemas": {
+      "ListResult": {
+        "properties": {
+          "projects": {
+            "description": "Sorted by name.",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "type": "object"
+      },
       "PingResult": {
         "properties": {
           "node_id": {
@@ -51,6 +176,53 @@
         },
         "required": [
           "node_id"
+        ],
+        "type": "object"
+      },
+      "Project": {
+        "properties": {
+          "id": {
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique among the projects.",
+            "type": "string"
+          },
+          "repos": {
+            "description": "The repos with a path on this node, sorted by name.",
+            "items": {
+              "$ref": "#/components/schemas/Repo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "repos"
+        ],
+        "type": "object"
+      },
+      "Repo": {
+        "properties": {
+          "id": {
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          },
+          "name": {
+            "description": "The name of the repo's directory, unique within its project.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The top level of the repo's working tree on this node.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "path"
         ],
         "type": "object"
       },

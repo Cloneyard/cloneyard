@@ -1,9 +1,11 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
 mod connection;
 mod ping;
+mod project;
 mod rpc;
 
 // A fixed name, so `cy --version` also prints "cloneyard <version>".
@@ -20,10 +22,29 @@ enum Command {
     Daemon,
     /// Check that the daemon answers, and how fast
     Ping,
+    /// Add a project
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
+    /// List the projects with the paths of their repos
+    Projects,
     /// Look at the daemon's API
     Rpc {
         #[command(subcommand)]
         command: RpcCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectCommand {
+    /// Add the git repo at a path as a project
+    Add {
+        /// A path in the repo's working tree
+        path: PathBuf,
+        /// The name of the project, instead of the name of the repo's directory
+        #[arg(long)]
+        name: Option<String>,
     },
 }
 
@@ -37,6 +58,10 @@ pub fn run() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Daemon => cloneyard_daemon::run(),
         Command::Ping => ping::run(),
+        Command::Project {
+            command: ProjectCommand::Add { path, name },
+        } => project::add(&path, name),
+        Command::Projects => project::list(),
         Command::Rpc {
             command: RpcCommand::Schema,
         } => rpc::schema(),

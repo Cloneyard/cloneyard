@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use cloneyard_api::Method;
-use cloneyard_rpc::{Client, ClientError, Error, Router, serve};
+use cloneyard_api::{ErrorCode, Method, MethodError, NoError};
+use cloneyard_rpc::{Client, ClientError, Error, HandlerError, Router, serve};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{
     AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf,
@@ -14,11 +16,42 @@ impl Method for Sum {
     const NAME: &'static str = "test.sum";
     type Params = (i64, i64);
     type Result = i64;
+    type Error = NoError;
+}
+
+struct Divide;
+
+impl Method for Divide {
+    const NAME: &'static str = "test.divide";
+    type Params = (i64, i64);
+    type Result = i64;
+    type Error = DivideError;
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema, thiserror::Error)]
+enum DivideError {
+    #[error("cannot divide {dividend} by zero")]
+    ByZero { dividend: i64 },
+}
+
+impl MethodError for DivideError {
+    const ERRORS: &'static [ErrorCode] = &[ErrorCode {
+        variant: "ByZero",
+        code: 1000,
+        message: "Division by zero",
+    }];
 }
 
 fn router() -> Router {
     Router::new()
         .handle::<Sum>(|(a, b)| async move { Ok(a + b) })
+        .handle::<Divide>(|(a, b)| async move {
+            if b == 0 {
+                return Err(HandlerError::Method(DivideError::ByZero { dividend: a }));
+            }
+            a.checked_div(b)
+                .ok_or_else(|| HandlerError::Rpc(Error::internal("overflow")))
+        })
         .method("add", |(a, b): (i64, i64)| async move { Ok(a + b) })
         .method("echo", |params: Value| async move { Ok(params) })
         .method("ping", |(): ()| async { Ok("pong") })
@@ -203,6 +236,38 @@ async fn passes_the_handler_error_through() {
 }
 
 #[tokio::test]
+async fn answers_a_method_error_with_its_code_message_and_fields() {
+    let responses =
+        exchange("{\"jsonrpc\":\"2.0\",\"method\":\"test.divide\",\"params\":[7,0],\"id\":1}\n")
+            .await;
+    assert_eq!(
+        responses,
+        [json!({
+            "jsonrpc": "2.0",
+            "error": {"code": 1000, "message": "Division by zero", "data": {"dividend": 7}},
+            "id": 1
+        })]
+    );
+}
+
+#[tokio::test]
+async fn answers_another_failure_of_a_typed_method_with_its_error_object() {
+    let responses = exchange(format!(
+        "{{\"jsonrpc\":\"2.0\",\"method\":\"test.divide\",\"params\":[{},-1],\"id\":1}}\n",
+        i64::MIN
+    ))
+    .await;
+    assert_eq!(
+        responses,
+        [json!({
+            "jsonrpc": "2.0",
+            "error": {"code": -32603, "message": "Internal error", "data": "overflow"},
+            "id": 1
+        })]
+    );
+}
+
+#[tokio::test]
 async fn answers_an_over_long_line_with_invalid_request() {
     let long = format!("\"{}\"", "a".repeat(16 * 1024 * 1024));
     let responses = exchange(format!(
@@ -267,6 +332,53 @@ async fn client_gets_the_typed_result_of_a_typed_method() {
     let sum = connect_to_router().request::<Sum>((2, 3)).await.unwrap();
 
     assert_eq!(sum, 5);
+}
+
+#[tokio::test]
+async fn client_gets_a_method_error_as_its_variant() {
+    let result = connect_to_router().request::<Divide>((7, 0)).await;
+
+    assert!(
+        matches!(
+            result,
+            Err(ClientError::Method(DivideError::ByZero { dividend: 7 }))
+        ),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn client_gets_another_error_of_a_typed_method_as_its_error_object() {
+    let result = connect_to_router().request::<Divide>((i64::MIN, -1)).await;
+
+    match result {
+        Err(ClientError::Rpc(error)) => assert_eq!(
+            error,
+            Error::new(Error::INTERNAL_ERROR, "Internal error").with_data("overflow")
+        ),
+        other => panic!("expected an RPC error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn client_reports_a_method_error_whose_fields_do_not_fit_its_code() {
+    let (client, server) = duplex(1024);
+    tokio::spawn(async move {
+        let (reader, mut writer) = split(server);
+        BufReader::new(reader).lines().next_line().await.unwrap();
+        writer
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"error\":{\"code\":1000,\"message\":\"Division by zero\",\"data\":{}},\"id\":1}\n")
+            .await
+            .unwrap();
+    });
+    let (reader, writer) = split(client);
+
+    let result = Client::new(reader, writer).request::<Divide>((7, 0)).await;
+
+    assert!(
+        matches!(result, Err(ClientError::InvalidResponse(_))),
+        "{result:?}"
+    );
 }
 
 #[test]
