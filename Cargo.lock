@@ -217,6 +217,7 @@ dependencies = [
  "cloneyard-api",
  "rusqlite",
  "rusqlite_migration",
+ "serde_json",
  "tempfile",
  "tokio",
  "ulid",

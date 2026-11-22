@@ -2,5 +2,6 @@
 
 mod schema;
 mod store;
+mod write;
 
 pub use store::Store;

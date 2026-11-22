@@ -5,12 +5,19 @@ use std::thread::{self, JoinHandle};
 use anyhow::Context as _;
 use cloneyard_api::project::{AddError, Project, Repo};
 use rusqlite::{Connection, OptionalExtension as _};
+use serde_json::json;
 use tokio::sync::oneshot;
 use ulid::Ulid;
 
 use crate::schema;
+use crate::write::{self, Changes, Clock, Entity};
 
-type Job = Box<dyn FnOnce(&mut Connection) + Send>;
+struct Database {
+    connection: Connection,
+    clock: Clock,
+}
+
+type Job = Box<dyn FnOnce(&mut Database) + Send>;
 
 const STOPPED: &str = "the database thread has stopped";
 
@@ -27,13 +34,17 @@ impl Store {
     ///
     /// When the file can't be opened or migrated.
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
+        Self::open_with(path, Box::new(write::system_clock)).await
+    }
+
+    async fn open_with(path: &Path, clock: Clock) -> anyhow::Result<Self> {
         let path = path.to_owned();
         let (jobs, queue) = mpsc::channel::<Job>();
         let (opened, ready) = oneshot::channel();
         let thread = thread::Builder::new()
             .name("cloneyard-store".to_owned())
             .spawn(move || {
-                let mut connection = match schema::open(&path, schema::migrations()) {
+                let connection = match schema::open(&path, schema::migrations()) {
                     Ok(connection) => connection,
                     Err(error) => {
                         let _ = opened.send(Err(error));
@@ -41,8 +52,9 @@ impl Store {
                     }
                 };
                 let _ = opened.send(Ok(()));
+                let mut database = Database { connection, clock };
                 for job in queue {
-                    job(&mut connection);
+                    job(&mut database);
                 }
             })
             .context("cannot start the database thread")?;
@@ -59,19 +71,7 @@ impl Store {
     ///
     /// When the database can't be read or written, or holds an invalid id.
     pub async fn node_id(&self) -> anyhow::Result<Ulid> {
-        self.call(|connection| {
-            connection.execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES ('node_id', ?1)",
-                [Ulid::generate().to_string()],
-            )?;
-            let id: String = connection.query_row(
-                "SELECT value FROM meta WHERE key = 'node_id'",
-                [],
-                |row| row.get(0),
-            )?;
-            Ulid::from_string(&id).with_context(|| format!("invalid node id {id:?}"))
-        })
-        .await
+        self.call(|connection| write::node_id(connection)).await
     }
 
     /// Adds project `name` with one repo, `repo`, at `path` on node `node_id`, or writes nothing when the path or the name is taken.
@@ -95,10 +95,9 @@ impl Store {
                 path: path.to_owned(),
             }],
         };
-        self.call(move |connection| {
-            let transaction = connection.transaction()?;
+        self.write(move |changes| {
             let repo = &project.repos[0];
-            let owner: Option<String> = transaction
+            let owner: Option<String> = changes
                 .query_row(
                     "SELECT project.name FROM repo_path \
                      JOIN repo ON repo.id = repo_path.repo_id \
@@ -114,7 +113,7 @@ impl Store {
                     project: owner,
                 }));
             }
-            let taken: bool = transaction.query_row(
+            let taken: bool = changes.query_row(
                 "SELECT EXISTS (SELECT 1 FROM project WHERE name = ?1)",
                 [&project.name],
                 |row| row.get(0),
@@ -124,19 +123,26 @@ impl Store {
                     name: project.name.clone(),
                 }));
             }
-            transaction.execute(
-                "INSERT INTO project (id, name) VALUES (?1, ?2)",
-                (project.id.to_string(), &project.name),
+            changes.insert(
+                Entity::Project,
+                &[("id", json!(project.id)), ("name", json!(project.name))],
             )?;
-            transaction.execute(
-                "INSERT INTO repo (id, project_id, name) VALUES (?1, ?2, ?3)",
-                (repo.id.to_string(), project.id.to_string(), &repo.name),
+            changes.insert(
+                Entity::Repo,
+                &[
+                    ("id", json!(repo.id)),
+                    ("project_id", json!(project.id)),
+                    ("name", json!(repo.name)),
+                ],
             )?;
-            transaction.execute(
-                "INSERT INTO repo_path (repo_id, node_id, path) VALUES (?1, ?2, ?3)",
-                (repo.id.to_string(), node_id.to_string(), &repo.path),
+            changes.insert(
+                Entity::RepoPath,
+                &[
+                    ("repo_id", json!(repo.id)),
+                    ("node_id", json!(node_id)),
+                    ("path", json!(repo.path)),
+                ],
             )?;
-            transaction.commit()?;
             Ok(Ok(project))
         })
         .await
@@ -192,9 +198,26 @@ impl Store {
         &self,
         work: impl FnOnce(&mut Connection) -> anyhow::Result<T> + Send + 'static,
     ) -> anyhow::Result<T> {
+        self.run(move |database| work(&mut database.connection))
+            .await
+    }
+
+    /// Runs `work` in one transaction, in which each change of an entity adds its `change_log` row.
+    async fn write<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Changes<'_>) -> anyhow::Result<T> + Send + 'static,
+    ) -> anyhow::Result<T> {
+        self.run(move |database| write::write(&mut database.connection, &database.clock, work))
+            .await
+    }
+
+    async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Database) -> anyhow::Result<T> + Send + 'static,
+    ) -> anyhow::Result<T> {
         let (reply, answer) = oneshot::channel();
-        let job: Job = Box::new(move |connection| {
-            let _ = reply.send(work(connection));
+        let job: Job = Box::new(move |database| {
+            let _ = reply.send(work(database));
         });
         self.jobs
             .as_ref()
@@ -220,14 +243,69 @@ impl Drop for Store {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
     use cloneyard_api::project::{AddError, Project, Repo};
+    use rusqlite::Connection;
+    use serde_json::{Value, json};
     use tempfile::TempDir;
     use ulid::Ulid;
 
     use super::Store;
+    use crate::write::Entity;
+
+    const NOW: i64 = 1_790_000_000_000;
+
+    #[derive(Debug, PartialEq)]
+    struct Logged {
+        node_id: String,
+        hlc: i64,
+        entity: String,
+        entity_id: String,
+        op: String,
+        fields: Value,
+    }
 
     async fn open(dir: &TempDir) -> Store {
         Store::open(&dir.path().join("cloneyard.db")).await.unwrap()
+    }
+
+    async fn open_at(dir: &TempDir, now: &Arc<AtomicI64>) -> Store {
+        let now = Arc::clone(now);
+        let clock = Box::new(move || now.load(Ordering::SeqCst));
+        Store::open_with(&dir.path().join("cloneyard.db"), clock)
+            .await
+            .unwrap()
+    }
+
+    fn sql(dir: &TempDir) -> Connection {
+        Connection::open(dir.path().join("cloneyard.db")).unwrap()
+    }
+
+    fn change_log(dir: &TempDir) -> Vec<Logged> {
+        sql(dir)
+            .prepare(
+                "SELECT node_id, hlc, entity, entity_id, op, fields FROM change_log ORDER BY rowid",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok(Logged {
+                    node_id: row.get(0)?,
+                    hlc: row.get(1)?,
+                    entity: row.get(2)?,
+                    entity_id: row.get(3)?,
+                    op: row.get(4)?,
+                    fields: serde_json::from_str(&row.get::<_, String>(5)?).unwrap(),
+                })
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn hlcs(dir: &TempDir) -> Vec<i64> {
+        change_log(dir).into_iter().map(|row| row.hlc).collect()
     }
 
     async fn add(
@@ -320,6 +398,7 @@ mod tests {
             }
         );
         assert_eq!(store.projects(node_id).await.unwrap(), [first]);
+        assert_eq!(change_log(&dir).len(), 3);
     }
 
     #[tokio::test]
@@ -339,6 +418,140 @@ mod tests {
             }
         );
         assert_eq!(store.projects(node_id).await.unwrap(), [first]);
+        assert_eq!(change_log(&dir).len(), 3);
+    }
+
+    #[tokio::test]
+    async fn logs_each_entity_of_a_new_project_as_an_upsert_by_this_node() {
+        let dir = TempDir::new().unwrap();
+        let now = Arc::new(AtomicI64::new(NOW));
+        let store = open_at(&dir, &now).await;
+        let node_id = store.node_id().await.unwrap();
+
+        let project = add(&store, node_id, "web", "/code/app").await.unwrap();
+
+        let node = node_id.to_string();
+        let project_id = project.id.to_string();
+        let repo_id = project.repos[0].id.to_string();
+        let logged = |counter, entity: &str, entity_id: &str, fields| Logged {
+            node_id: node.clone(),
+            hlc: (NOW << 16) + counter,
+            entity: entity.to_owned(),
+            entity_id: entity_id.to_owned(),
+            op: "upsert".to_owned(),
+            fields,
+        };
+        assert_eq!(
+            change_log(&dir),
+            [
+                logged(
+                    0,
+                    "project",
+                    &project_id,
+                    json!({"id": project_id, "name": "web"})
+                ),
+                logged(
+                    1,
+                    "repo",
+                    &repo_id,
+                    json!({"id": repo_id, "project_id": project_id, "name": "app"})
+                ),
+                logged(
+                    2,
+                    "repo_path",
+                    &format!("{repo_id}:{node}"),
+                    json!({"repo_id": repo_id, "node_id": node, "path": "/code/app"})
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_leaves_neither_its_changes_nor_their_change_log_rows() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let node_id = store.node_id().await.unwrap();
+
+        let error = store
+            .write(|changes| {
+                changes.insert(
+                    Entity::Project,
+                    &[("id", json!(Ulid::generate())), ("name", json!("web"))],
+                )?;
+                changes.insert(
+                    Entity::Repo,
+                    &[
+                        ("id", json!(Ulid::generate())),
+                        ("project_id", json!(Ulid::generate())),
+                        ("name", json!("app")),
+                    ],
+                )
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "FOREIGN KEY constraint failed");
+        assert_eq!(store.projects(node_id).await.unwrap(), []);
+        assert_eq!(change_log(&dir), []);
+    }
+
+    #[tokio::test]
+    async fn the_hlc_keeps_growing_when_the_clock_goes_back_also_after_reopening() {
+        let dir = TempDir::new().unwrap();
+        let now = Arc::new(AtomicI64::new(NOW));
+        let store = open_at(&dir, &now).await;
+        let node_id = store.node_id().await.unwrap();
+        add(&store, node_id, "web", "/code/web").await.unwrap();
+
+        now.store(NOW - 60_000, Ordering::SeqCst);
+        add(&store, node_id, "api", "/code/api").await.unwrap();
+        drop(store);
+        let store = open_at(&dir, &now).await;
+        add(&store, node_id, "docs", "/code/docs").await.unwrap();
+
+        let expected: Vec<i64> = (0..9).map(|counter| (NOW << 16) + counter).collect();
+        assert_eq!(hlcs(&dir), expected);
+    }
+
+    #[tokio::test]
+    async fn the_hlc_follows_the_clock_once_the_clock_is_past_it() {
+        let dir = TempDir::new().unwrap();
+        let now = Arc::new(AtomicI64::new(NOW));
+        let store = open_at(&dir, &now).await;
+        let node_id = store.node_id().await.unwrap();
+        add(&store, node_id, "web", "/code/web").await.unwrap();
+
+        now.store(NOW + 1, Ordering::SeqCst);
+        add(&store, node_id, "api", "/code/api").await.unwrap();
+
+        let ticks = [NOW << 16, (NOW + 1) << 16];
+        let expected: Vec<i64> = ticks
+            .iter()
+            .flat_map(|tick| (0..3).map(move |counter| tick + counter))
+            .collect();
+        assert_eq!(hlcs(&dir), expected);
+    }
+
+    #[tokio::test]
+    async fn names_the_hlc_when_the_database_holds_an_invalid_one_and_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let node_id = store.node_id().await.unwrap();
+        sql(&dir)
+            .execute("INSERT INTO meta (key, value) VALUES ('hlc', 'soon')", [])
+            .unwrap();
+
+        let error = store
+            .add_project(node_id, "web", "app", "/code/app")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "cannot add project web: invalid hlc \"soon\": invalid digit found in string"
+        );
+        assert_eq!(store.projects(node_id).await.unwrap(), []);
+        assert_eq!(change_log(&dir), []);
     }
 
     #[tokio::test]

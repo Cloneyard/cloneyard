@@ -23,3 +23,7 @@ _Avoid_: repository, clone, checkout
 **Restricted project**:
 A project whose data never leaves its node, except through a manual export.
 _Avoid_: private project, company project, offline project
+
+**Change log**:
+A node's ordered record of each change it makes to data that changes over time, such as projects and repos, which sync sends to the hub. Data that is only ever added to, such as telemetry, is not in it.
+_Avoid_: journal, history, audit log

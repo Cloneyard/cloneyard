@@ -10,11 +10,12 @@ A SQLite database on a thread of its own: the node's `cloneyard.db`, and any oth
 - The tables `meta`, `change_log`, `project`, `repo` and `repo_path`, in `migrations/`.
 - The node id, created the first time it is asked for.
 - Projects with their repos and the repos' paths on a node; a new project, its repo and its path go in one transaction.
+- One write path for entity tables, which adds a `change_log` row for each entity a transaction changes, with the node id and an HLC timestamp that never goes back.
 
 ## Out of scope
 
 - Where the files live and the locks around them, which the daemon owns.
 - SQL anywhere else: each feature adds the methods it needs to this crate.
-- Writes to `change_log`, down migrations and backup rotation.
+- Reading and trimming `change_log`, down migrations and backup rotation.
 
-[ADR 0003](../../docs/adr/0003-sqlite-via-rusqlite.md) explains rusqlite on a dedicated thread, and [ADR 0004](../../docs/adr/0004-restricted-project-database-file.md) the file per Restricted project.
+[ADR 0003](../../docs/adr/0003-sqlite-via-rusqlite.md) explains rusqlite on a dedicated thread, [ADR 0004](../../docs/adr/0004-restricted-project-database-file.md) the file per Restricted project, and [ADR 0008](../../docs/adr/0008-entity-change-log.md) the change log.
