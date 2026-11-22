@@ -11,6 +11,7 @@ pub(crate) fn migrations() -> Vec<M<'static>> {
     vec![
         M::up(include_str!("../migrations/0001-initial.sql")),
         M::up(include_str!("../migrations/0002-repo-path.sql")),
+        M::up(include_str!("../migrations/0003-change-log-ops.sql")),
     ]
 }
 
@@ -162,7 +163,7 @@ mod tests {
 
         let connection = open_latest(&dir);
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 2);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 3);
         assert_eq!(pragma::<String>(&connection, "journal_mode"), "wal");
         assert_eq!(pragma::<i64>(&connection, "foreign_keys"), 1);
         assert!(!dir.path().join("backups").exists());
@@ -194,7 +195,7 @@ mod tests {
 
         let after = unix_seconds();
         let expected = vec![("cloneyard".to_owned(), "api".to_owned())];
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 2);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 3);
         let paths: i64 = connection
             .query_row("SELECT count(*) FROM repo_path", [], |row| row.get(0))
             .unwrap();
@@ -227,13 +228,13 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "database schema v4 is newer than this cloneyard (v2); \
+                "database schema v5 is newer than this cloneyard (v3); \
                  upgrade cloneyard or restore a file from {}",
                 dir.path().join("backups").display()
             )
         );
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
     }
 
     #[test]
@@ -262,6 +263,28 @@ mod tests {
         assert!(
             format!("{error:#}").contains("file is not a database"),
             "{error:#}"
+        );
+    }
+
+    #[test]
+    fn the_change_log_takes_only_upserts_and_deletes() {
+        let dir = TempDir::new().unwrap();
+        let connection = open_latest(&dir);
+        let log = |id: &str, op: &str| {
+            connection.execute(
+                "INSERT INTO change_log (id, node_id, hlc, entity, entity_id, op, fields) \
+                 VALUES (?1, ?2, 1, 'project', ?3, ?4, '{}')",
+                [id, OTHER_PROJECT, PROJECT, op],
+            )
+        };
+
+        log("01K9Z3V6Y8Q2N5M7P4R1T0W3Y0", "upsert").unwrap();
+        log("01K9Z3V6Y8Q2N5M7P4R1T0W3Y1", "delete").unwrap();
+        let error = log("01K9Z3V6Y8Q2N5M7P4R1T0W3Y2", "append").unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "CHECK constraint failed: op IN ('upsert', 'delete')"
         );
     }
 
