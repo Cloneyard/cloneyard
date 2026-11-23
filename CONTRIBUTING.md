@@ -24,7 +24,7 @@ You sign the Cloneyard CLA once, on your first pull request: CLA Assistant comme
 - Atomic: one logical change per commit, together with its tests.
 - No AI attribution: no `Co-Authored-By` trailer for an agent and no "Generated with" footer, in commits or pull request descriptions.
 
-CI checks the subject and the AI attribution of every commit in a pull request except merges and Dependabot's, and the AI attribution in its description. To have `git commit` check them too, turn on the hook once per clone:
+CI checks the subject and the AI attribution of every commit in a pull request except merges and Dependabot's, and the AI attribution in its description. To have `git commit` check them too, turn on the hook once in your copy of the repo:
 
 ```bash
 git config core.hooksPath .githooks
