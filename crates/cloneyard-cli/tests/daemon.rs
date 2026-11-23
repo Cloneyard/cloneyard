@@ -1,125 +1,20 @@
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::PermissionsExt as _;
-use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt as _;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
-use tempfile::TempDir;
+use common::{
+    LOG_IN, Node, account_add, accounts_dir, claude_dir, fake_claude, fake_claude_with_status,
+    project_add, repo, stderr_of_failure, stdout_of_success, wait_until,
+};
+
+mod common;
 
 const SCHEMA: &str = include_str!("../../../schema/cloneyard.openrpc.json");
-
-struct Node {
-    home: TempDir,
-}
-
-impl Node {
-    fn new() -> Self {
-        Self {
-            home: TempDir::new().unwrap(),
-        }
-    }
-
-    fn cy(&self, subcommand: &str) -> Command {
-        let home = self.home.path();
-        let mut cy = Command::new(env!("CARGO_BIN_EXE_cy"));
-        cy.arg(subcommand)
-            .env_clear()
-            .env("HOME", home)
-            .env("XDG_CONFIG_HOME", home.join("config"))
-            .env("XDG_DATA_HOME", home.join("data"))
-            .env("XDG_STATE_HOME", home.join("state"))
-            .env("XDG_CACHE_HOME", home.join("cache"))
-            .env("XDG_RUNTIME_DIR", home);
-        if let Some(path) = env::var_os("PATH") {
-            cy.env("PATH", path);
-        }
-        cy
-    }
-
-    fn socket(&self) -> PathBuf {
-        self.home.path().join("cloneyard").join("daemon.sock")
-    }
-
-    fn start_daemon(&self) -> Daemon {
-        self.spawn(self.cy("daemon"))
-    }
-
-    fn spawn(&self, mut daemon: Command) -> Daemon {
-        let child = daemon
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let daemon = Daemon(child);
-        wait_until("the daemon to listen", || {
-            UnixStream::connect(self.socket()).is_ok()
-        });
-        daemon
-    }
-}
-
-/// Kills the daemon when a test fails before it stops.
-struct Daemon(Child);
-
-impl Daemon {
-    fn terminate(mut self) -> ExitStatus {
-        let pid = self.0.id().to_string();
-        let kill = Command::new("kill").args(["-TERM", &pid]).status().unwrap();
-        assert!(kill.success());
-        let mut status = None;
-        wait_until("the daemon to exit", || {
-            status = self.0.try_wait().unwrap();
-            status.is_some()
-        });
-        status.unwrap()
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !condition() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn stderr_of_failure(output: &Output) -> String {
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    String::from_utf8(output.stderr.clone()).unwrap()
-}
-
-fn stdout_of_success(output: &Output) -> String {
-    assert!(output.status.success(), "{output:?}");
-    String::from_utf8(output.stdout.clone()).unwrap()
-}
-
-/// A new git repo at `path`, given as its canonical path.
-fn repo(path: &Path) -> PathBuf {
-    let status = Command::new("git")
-        .args(["init", "--quiet"])
-        .arg(path)
-        .status()
-        .unwrap();
-    assert!(status.success());
-    fs::canonicalize(path).unwrap()
-}
-
-fn project_add(node: &Node, path: &Path) -> Output {
-    node.cy("project").arg("add").arg(path).output().unwrap()
-}
 
 /// The node id in `cloneyard <version>, node <id>, round trip <ms> ms`.
 fn node_id_from_ping(node: &Node) -> String {
@@ -468,71 +363,6 @@ fn project_add_refuses_a_path_that_is_not_utf_8() {
         stderr,
         format!("error: {} is not valid UTF-8\n", path.display())
     );
-}
-
-const LOG_IN: &str = r#"echo '{"accessToken": "test"}' > "$CLAUDE_CONFIG_DIR/.credentials.json"
-echo '{"numStartups": 0}' > "$CLAUDE_CONFIG_DIR/.claude.json""#;
-
-const STATUS: &str = r#"if [ -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
-    echo '{"loggedIn": true}'
-else
-    echo '{"loggedIn": false}'
-    exit 1
-fi"#;
-
-/// Puts a `claude` in `bin/` whose `auth login` runs `login` and whose `auth status` reports a login when `.credentials.json` is in `$CLAUDE_CONFIG_DIR`.
-fn fake_claude(node: &Node, login: &str) {
-    fake_claude_with_status(node, login, STATUS);
-}
-
-fn fake_claude_with_status(node: &Node, login: &str, status: &str) {
-    let bin = node.home.path().join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let claude = bin.join("claude");
-    fs::write(
-        &claude,
-        format!(
-            r#"#!/bin/sh
-case "$1 $2" in
-"auth login")
-{login}
-;;
-"auth status")
-{status}
-;;
-*)
-exit 2
-;;
-esac
-"#
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-/// `cy account add <name>`, which finds the fake `claude` first on its `PATH`.
-fn account_add(node: &Node, name: &str) -> Command {
-    let mut path = OsString::from(node.home.path().join("bin"));
-    if let Some(inherited) = env::var_os("PATH") {
-        path.push(":");
-        path.push(inherited);
-    }
-    let mut cy = node.cy("account");
-    cy.args(["add", name]).env("PATH", path);
-    cy
-}
-
-fn accounts_dir(node: &Node) -> PathBuf {
-    node.home.path().join("data/cloneyard/accounts")
-}
-
-/// The directory of account `name`, as the daemon records it.
-fn claude_dir(node: &Node, name: &str) -> PathBuf {
-    fs::canonicalize(accounts_dir(node))
-        .unwrap()
-        .join(name)
-        .join("claude")
 }
 
 fn assert_no_accounts(node: &Node) {
