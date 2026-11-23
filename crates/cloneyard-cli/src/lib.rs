@@ -2,9 +2,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use cloneyard_api::clone::Handle;
 
 mod account;
 mod claude;
+mod clone;
 mod connection;
 mod ping;
 mod project;
@@ -27,6 +29,13 @@ enum Command {
     },
     /// List the accounts with their providers and directories
     Accounts,
+    /// Run, show or stop a clone
+    Clone {
+        #[command(subcommand)]
+        command: CloneCommand,
+    },
+    /// List the clones with their projects, accounts, modes and states
+    Clones,
     /// Run the daemon in the foreground
     Daemon,
     /// Check that the daemon answers, and how fast
@@ -55,6 +64,31 @@ enum AccountCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum CloneCommand {
+    /// Start a headless clone on an account, in a checkout of a project's repo, and print its handle
+    Run {
+        /// The project whose repo the clone gets a checkout of
+        #[arg(long)]
+        project: String,
+        /// The account the clone runs on
+        #[arg(long)]
+        account: String,
+        /// The first message to the clone
+        prompt: String,
+    },
+    /// Show a clone with its reason, branch, checkout and sessions
+    Show {
+        /// The clone's handle, such as CT-0042 or ct-42
+        handle: Handle,
+    },
+    /// End a working clone's processes
+    Stop {
+        /// The clone's handle, such as CT-0042 or ct-42
+        handle: Handle,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ProjectCommand {
     /// Add the git repo at a path as a project
     Add {
@@ -78,6 +112,21 @@ pub fn run() -> ExitCode {
             command: AccountCommand::Add { name },
         } => account::add(&name),
         Command::Accounts => account::list(),
+        Command::Clone {
+            command:
+                CloneCommand::Run {
+                    project,
+                    account,
+                    prompt,
+                },
+        } => clone::run(project, account, prompt),
+        Command::Clone {
+            command: CloneCommand::Show { handle },
+        } => clone::show(handle),
+        Command::Clone {
+            command: CloneCommand::Stop { handle },
+        } => clone::stop(handle),
+        Command::Clones => clone::list(),
         Command::Daemon => cloneyard_daemon::run(),
         Command::Ping => ping::run(),
         Command::Project {

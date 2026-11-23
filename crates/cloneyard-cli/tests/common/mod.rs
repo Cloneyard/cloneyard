@@ -161,15 +161,20 @@ esac
     fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// `cy account add <name>`, which finds the fake `claude` first on its `PATH`.
-pub fn account_add(node: &Node, name: &str) -> Command {
+/// `bin/` in the node's home, where the fake `claude` is, before the inherited `PATH`.
+pub fn bin_path(node: &Node) -> OsString {
     let mut path = OsString::from(node.home.path().join("bin"));
     if let Some(inherited) = env::var_os("PATH") {
         path.push(":");
         path.push(inherited);
     }
+    path
+}
+
+/// `cy account add <name>`, which finds the fake `claude` first on its `PATH`.
+pub fn account_add(node: &Node, name: &str) -> Command {
     let mut cy = node.cy("account");
-    cy.args(["add", name]).env("PATH", path);
+    cy.args(["add", name]).env("PATH", bin_path(node));
     cy
 }
 
