@@ -3,9 +3,10 @@ use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
 use anyhow::Context as _;
+use cloneyard_api::account::{self, Account, Provider};
 use cloneyard_api::project::{AddError, Project, Repo};
 use rusqlite::{Connection, OptionalExtension as _};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use ulid::Ulid;
 
@@ -194,6 +195,109 @@ impl Store {
         .context("cannot list the projects")
     }
 
+    /// Adds account `name` of `provider` with its directory `dir` on node `node_id`, or writes nothing when the name or the directory is taken.
+    ///
+    /// # Errors
+    ///
+    /// When the database can't be read or written.
+    pub async fn add_account(
+        &self,
+        node_id: Ulid,
+        name: &str,
+        provider: Provider,
+        dir: &str,
+    ) -> anyhow::Result<Result<Account, account::AddError>> {
+        let dir = dir.to_owned();
+        let account = Account {
+            id: Ulid::generate(),
+            name: name.to_owned(),
+            provider,
+            dir: Some(dir.clone()),
+        };
+        self.write(move |changes| {
+            let taken: bool = changes.query_row(
+                "SELECT EXISTS (SELECT 1 FROM account WHERE name = ?1)",
+                [&account.name],
+                |row| row.get(0),
+            )?;
+            if taken {
+                return Ok(Err(account::AddError::NameTaken {
+                    name: account.name.clone(),
+                }));
+            }
+            let owner: Option<String> = changes
+                .query_row(
+                    "SELECT account.name FROM account_dir \
+                     JOIN account ON account.id = account_dir.account_id \
+                     WHERE account_dir.node_id = ?1 AND account_dir.dir = ?2",
+                    (node_id.to_string(), &dir),
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(owner) = owner {
+                return Ok(Err(account::AddError::DirTaken {
+                    dir,
+                    account: owner,
+                }));
+            }
+            changes.insert(
+                Entity::Account,
+                &[
+                    ("id", json!(account.id)),
+                    ("name", json!(account.name)),
+                    ("provider", json!(account.provider)),
+                ],
+            )?;
+            changes.insert(
+                Entity::AccountDir,
+                &[
+                    ("account_id", json!(account.id)),
+                    ("node_id", json!(node_id)),
+                    ("dir", json!(dir)),
+                ],
+            )?;
+            Ok(Ok(account))
+        })
+        .await
+        .with_context(|| format!("cannot add account {name}"))
+    }
+
+    /// The accounts sorted by name, each with its directory on node `node_id` when it has one there.
+    ///
+    /// # Errors
+    ///
+    /// When the database can't be read or holds an invalid id or provider.
+    pub async fn accounts(&self, node_id: Ulid) -> anyhow::Result<Vec<Account>> {
+        self.call(move |connection| {
+            let mut statement = connection.prepare(
+                "SELECT account.id, account.name, account.provider, account_dir.dir FROM account \
+                 LEFT JOIN account_dir \
+                 ON account_dir.account_id = account.id AND account_dir.node_id = ?1 \
+                 ORDER BY account.name",
+            )?;
+            let rows = statement.query_map([node_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?;
+            rows.map(|row| {
+                let (id, name, provider, dir) = row?;
+                Ok(Account {
+                    id: ulid(&id)?,
+                    name,
+                    provider: provider_of(&provider)?,
+                    dir,
+                })
+            })
+            .collect()
+        })
+        .await
+        .context("cannot list the accounts")
+    }
+
     async fn call<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut Connection) -> anyhow::Result<T> + Send + 'static,
@@ -231,6 +335,11 @@ fn ulid(id: &str) -> anyhow::Result<Ulid> {
     Ulid::from_string(id).with_context(|| format!("invalid id {id:?}"))
 }
 
+fn provider_of(name: &str) -> anyhow::Result<Provider> {
+    serde_json::from_value(Value::String(name.to_owned()))
+        .with_context(|| format!("invalid provider {name:?}"))
+}
+
 impl Drop for Store {
     // Waits for the thread, so the connection is closed once the store is gone.
     fn drop(&mut self) {
@@ -246,6 +355,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI64, Ordering};
 
+    use cloneyard_api::account::{self, Account, Provider};
     use cloneyard_api::project::{AddError, Project, Repo};
     use rusqlite::Connection;
     use serde_json::{Value, json};
@@ -552,6 +662,191 @@ mod tests {
         );
         assert_eq!(store.projects(node_id).await.unwrap(), []);
         assert_eq!(change_log(&dir), []);
+    }
+
+    async fn add_account(
+        store: &Store,
+        node_id: Ulid,
+        name: &str,
+        dir: &str,
+    ) -> Result<Account, account::AddError> {
+        store
+            .add_account(node_id, name, Provider::ClaudeCode, dir)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn adds_an_account_with_its_dir_and_keeps_them_after_reopening() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let node_id = store.node_id().await.unwrap();
+
+        let account = add_account(&store, node_id, "personal", "/data/personal/claude")
+            .await
+            .unwrap();
+        drop(store);
+        let listed = open(&dir).await.accounts(node_id).await.unwrap();
+
+        assert_eq!(account.name, "personal");
+        assert_eq!(account.provider, Provider::ClaudeCode);
+        assert_eq!(account.dir.as_deref(), Some("/data/personal/claude"));
+        assert_eq!(listed, [account]);
+    }
+
+    #[tokio::test]
+    async fn lists_the_accounts_by_name() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let node_id = store.node_id().await.unwrap();
+        add_account(&store, node_id, "work", "/data/work/claude")
+            .await
+            .unwrap();
+        add_account(&store, node_id, "personal", "/data/personal/claude")
+            .await
+            .unwrap();
+
+        let names: Vec<String> = store
+            .accounts(node_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|account| account.name)
+            .collect();
+
+        assert_eq!(names, ["personal", "work"]);
+    }
+
+    #[tokio::test]
+    async fn lists_an_account_without_a_dir_on_a_node_where_it_has_none() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let account = add_account(
+            &store,
+            Ulid::generate(),
+            "personal",
+            "/data/personal/claude",
+        )
+        .await
+        .unwrap();
+
+        let listed = store.accounts(Ulid::generate()).await.unwrap();
+
+        assert_eq!(
+            listed,
+            [Account {
+                dir: None,
+                ..account
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_a_taken_account_name_and_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let node_id = store.node_id().await.unwrap();
+        let first = add_account(&store, node_id, "personal", "/data/personal/claude")
+            .await
+            .unwrap();
+
+        let error = add_account(&store, node_id, "personal", "/data/other/claude")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            account::AddError::NameTaken {
+                name: "personal".to_owned()
+            }
+        );
+        assert_eq!(store.accounts(node_id).await.unwrap(), [first]);
+        assert_eq!(change_log(&dir).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_dir_that_another_account_has_and_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let node_id = store.node_id().await.unwrap();
+        let first = add_account(&store, node_id, "personal", "/data/personal/claude")
+            .await
+            .unwrap();
+
+        let error = add_account(&store, node_id, "work", "/data/personal/claude")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            account::AddError::DirTaken {
+                dir: "/data/personal/claude".to_owned(),
+                account: "personal".to_owned()
+            }
+        );
+        assert_eq!(store.accounts(node_id).await.unwrap(), [first]);
+        assert_eq!(change_log(&dir).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn logs_an_account_and_its_dir_as_upserts_by_this_node() {
+        let dir = TempDir::new().unwrap();
+        let now = Arc::new(AtomicI64::new(NOW));
+        let store = open_at(&dir, &now).await;
+        let node_id = store.node_id().await.unwrap();
+
+        let account = add_account(&store, node_id, "personal", "/data/personal/claude")
+            .await
+            .unwrap();
+
+        let node = node_id.to_string();
+        let account_id = account.id.to_string();
+        let logged = |counter, entity: &str, entity_id: String, fields| Logged {
+            node_id: node.clone(),
+            hlc: (NOW << 16) + counter,
+            entity: entity.to_owned(),
+            entity_id,
+            op: "upsert".to_owned(),
+            fields,
+        };
+        assert_eq!(
+            change_log(&dir),
+            [
+                logged(
+                    0,
+                    "account",
+                    account_id.clone(),
+                    json!({"id": account_id, "name": "personal", "provider": "claude-code"})
+                ),
+                logged(
+                    1,
+                    "account_dir",
+                    format!("{account_id}:{node}"),
+                    json!({"account_id": account_id, "node_id": node, "dir": "/data/personal/claude"})
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn names_the_provider_when_the_database_holds_an_unknown_one() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let node_id = store.node_id().await.unwrap();
+        sql(&dir)
+            .execute(
+                "INSERT INTO account (id, name, provider) VALUES (?1, 'personal', 'codex')",
+                [Ulid::generate().to_string()],
+            )
+            .unwrap();
+
+        let error = store.accounts(node_id).await.unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "cannot list the accounts: invalid provider \"codex\": \
+             unknown variant `codex`, expected `claude-code`"
+        );
     }
 
     #[tokio::test]

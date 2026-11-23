@@ -27,3 +27,11 @@ _Avoid_: private project, company project, offline project
 **Change log**:
 A node's ordered record of each change it makes to data that changes over time, such as projects and repos, which sync sends to the hub. Data that is only ever added to, such as telemetry, is not in it.
 _Avoid_: journal, history, audit log
+
+**Account**:
+Who Cloneyard's agents run as at a provider, such as a Claude subscription; on each node its login lives in a directory of its own, such as Claude Code's config directory.
+_Avoid_: profile, login
+
+**Provider**:
+The coding agent CLI that an account logs in to and Cloneyard runs, such as Claude Code.
+_Avoid_: runtime, harness, backend

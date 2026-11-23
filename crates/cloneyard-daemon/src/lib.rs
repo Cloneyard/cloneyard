@@ -1,5 +1,6 @@
 //! The `cloneyard daemon` process: settings, the socket and the methods it serves.
 
+mod account;
 mod config;
 mod daemon;
 mod node;

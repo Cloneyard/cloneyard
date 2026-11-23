@@ -12,6 +12,7 @@ pub(crate) fn migrations() -> Vec<M<'static>> {
         M::up(include_str!("../migrations/0001-initial.sql")),
         M::up(include_str!("../migrations/0002-repo-path.sql")),
         M::up(include_str!("../migrations/0003-change-log-ops.sql")),
+        M::up(include_str!("../migrations/0004-account.sql")),
     ]
 }
 
@@ -89,6 +90,8 @@ mod tests {
 
     const PROJECT: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XA";
     const OTHER_PROJECT: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XB";
+    const ACCOUNT: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XC";
+    const OTHER_ACCOUNT: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XD";
 
     fn open_latest(dir: &TempDir) -> Connection {
         open(&dir.path().join("cloneyard.db"), migrations()).unwrap()
@@ -163,7 +166,7 @@ mod tests {
 
         let connection = open_latest(&dir);
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 3);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
         assert_eq!(pragma::<String>(&connection, "journal_mode"), "wal");
         assert_eq!(pragma::<i64>(&connection, "foreign_keys"), 1);
         assert!(!dir.path().join("backups").exists());
@@ -195,7 +198,7 @@ mod tests {
 
         let after = unix_seconds();
         let expected = vec![("cloneyard".to_owned(), "api".to_owned())];
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 3);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
         let paths: i64 = connection
             .query_row("SELECT count(*) FROM repo_path", [], |row| row.get(0))
             .unwrap();
@@ -215,6 +218,65 @@ mod tests {
     }
 
     #[test]
+    fn backs_up_a_v3_database_before_adding_the_account_tables() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cloneyard.db");
+        let v3: Vec<M<'static>> = migrations().into_iter().take(3).collect();
+        let connection = open(&path, v3).unwrap();
+        connection
+            .execute(
+                "INSERT INTO project (id, name) VALUES (?1, 'cloneyard')",
+                [PROJECT],
+            )
+            .unwrap();
+        drop(connection);
+
+        let connection = open(&path, migrations()).unwrap();
+
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
+        let counts: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT (SELECT count(*) FROM project), (SELECT count(*) FROM account), \
+                 (SELECT count(*) FROM account_dir)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 0, 0));
+        let [backup] = backups(&dir).try_into().unwrap();
+        let name = backup.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("cloneyard-v3-"), "{name}");
+    }
+
+    #[test]
+    fn an_account_dir_belongs_to_one_account_on_a_node() {
+        let dir = TempDir::new().unwrap();
+        let connection = open_latest(&dir);
+        connection
+            .execute(
+                "INSERT INTO account (id, name, provider) \
+                 VALUES (?1, 'personal', 'claude-code'), (?2, 'work', 'claude-code')",
+                [ACCOUNT, OTHER_ACCOUNT],
+            )
+            .unwrap();
+        let add_dir = |account_id: &str, node_id: &str| {
+            connection.execute(
+                "INSERT INTO account_dir (account_id, node_id, dir) VALUES (?1, ?2, '/data/claude')",
+                [account_id, node_id],
+            )
+        };
+        add_dir(ACCOUNT, "01K9Z3V6Y8Q2N5M7P4R1T0W3Y0").unwrap();
+
+        let error = add_dir(OTHER_ACCOUNT, "01K9Z3V6Y8Q2N5M7P4R1T0W3Y0").unwrap_err();
+        add_dir(OTHER_ACCOUNT, "01K9Z3V6Y8Q2N5M7P4R1T0W3Y1").unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "UNIQUE constraint failed: account_dir.node_id, account_dir.dir"
+        );
+    }
+
+    #[test]
     fn refuses_a_schema_newer_than_its_migrations_and_leaves_the_file_alone() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("cloneyard.db");
@@ -228,13 +290,13 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "database schema v5 is newer than this cloneyard (v3); \
+                "database schema v6 is newer than this cloneyard (v4); \
                  upgrade cloneyard or restore a file from {}",
                 dir.path().join("backups").display()
             )
         );
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 6);
     }
 
     #[test]

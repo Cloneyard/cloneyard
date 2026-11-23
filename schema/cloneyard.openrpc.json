@@ -147,10 +147,168 @@
           "$ref": "#/components/schemas/ListResult"
         }
       }
+    },
+    {
+      "name": "account.add",
+      "summary": "Adds an account that is logged in to its provider in a directory on this node",
+      "params": [
+        {
+          "name": "dir",
+          "required": true,
+          "schema": {
+            "description": "The absolute path of the directory that holds the account's login on this node.",
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "required": true,
+          "schema": {
+            "description": "The name of the account.",
+            "type": "string"
+          }
+        },
+        {
+          "name": "provider",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Provider"
+          }
+        }
+      ],
+      "result": {
+        "name": "Account",
+        "schema": {
+          "$ref": "#/components/schemas/Account"
+        }
+      },
+      "errors": [
+        {
+          "code": 1100,
+          "message": "Directory is not an absolute path",
+          "data": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "dir"
+            ]
+          }
+        },
+        {
+          "code": 1101,
+          "message": "Path is not a directory",
+          "data": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "dir"
+            ]
+          }
+        },
+        {
+          "code": 1102,
+          "message": "Directory belongs to another account",
+          "data": {
+            "type": "object",
+            "properties": {
+              "account": {
+                "description": "The name of the account that has the directory.",
+                "type": "string"
+              },
+              "dir": {
+                "description": "The directory with symlinks resolved.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "dir",
+              "account"
+            ]
+          }
+        },
+        {
+          "code": 1103,
+          "message": "Account name is taken",
+          "data": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      ],
+      "paramStructure": "by-name"
+    },
+    {
+      "name": "account.list",
+      "summary": "Returns the accounts with their directories on this node",
+      "params": [],
+      "result": {
+        "name": "AccountListResult",
+        "schema": {
+          "$ref": "#/components/schemas/AccountListResult"
+        }
+      }
     }
   ],
   "components": {
     "schemas": {
+      "Account": {
+        "properties": {
+          "dir": {
+            "description": "The directory that holds the account's login on this node, or null when it has none here.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique among the accounts.",
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/Provider"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "AccountListResult": {
+        "properties": {
+          "accounts": {
+            "description": "Sorted by name.",
+            "items": {
+              "$ref": "#/components/schemas/Account"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accounts"
+        ],
+        "type": "object"
+      },
       "ListResult": {
         "properties": {
           "projects": {
@@ -203,6 +361,16 @@
           "repos"
         ],
         "type": "object"
+      },
+      "Provider": {
+        "description": "The coding agent CLI that an account logs in to.",
+        "oneOf": [
+          {
+            "const": "claude-code",
+            "description": "Claude Code, which keeps each login in a config directory of its own.",
+            "type": "string"
+          }
+        ]
       },
       "Repo": {
         "properties": {

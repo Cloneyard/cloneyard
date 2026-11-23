@@ -3,6 +3,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod account;
+mod claude;
 mod connection;
 mod ping;
 mod project;
@@ -18,6 +20,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Add an account
+    Account {
+        #[command(subcommand)]
+        command: AccountCommand,
+    },
+    /// List the accounts with their providers and directories
+    Accounts,
     /// Run the daemon in the foreground
     Daemon,
     /// Check that the daemon answers, and how fast
@@ -33,6 +42,15 @@ enum Command {
     Rpc {
         #[command(subcommand)]
         command: RpcCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AccountCommand {
+    /// Log in to Claude Code in a directory of its own and add it as an account
+    Add {
+        /// The name of the account, which also names its directory
+        name: String,
     },
 }
 
@@ -56,6 +74,10 @@ enum RpcCommand {
 
 pub fn run() -> ExitCode {
     let result = match Cli::parse().command {
+        Command::Account {
+            command: AccountCommand::Add { name },
+        } => account::add(&name),
+        Command::Accounts => account::list(),
         Command::Daemon => cloneyard_daemon::run(),
         Command::Ping => ping::run(),
         Command::Project {
