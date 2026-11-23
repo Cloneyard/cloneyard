@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use rusqlite::types::Value as Column;
 use rusqlite::{Connection, OptionalExtension as _, Params, Row, Transaction, params_from_iter};
 use serde_json::{Map, Value};
@@ -25,6 +25,8 @@ pub(crate) enum Entity {
     RepoPath,
     Account,
     AccountDir,
+    Clone,
+    Session,
 }
 
 impl Entity {
@@ -35,13 +37,15 @@ impl Entity {
             Self::RepoPath => "repo_path",
             Self::Account => "account",
             Self::AccountDir => "account_dir",
+            Self::Clone => "clone",
+            Self::Session => "session",
         }
     }
 
     /// The columns whose values, joined with `:`, are the entity's id in `change_log`.
     fn key(self) -> &'static [&'static str] {
         match self {
-            Self::Project | Self::Repo | Self::Account => &["id"],
+            Self::Project | Self::Repo | Self::Account | Self::Clone | Self::Session => &["id"],
             Self::RepoPath => &["repo_id", "node_id"],
             Self::AccountDir => &["account_id", "node_id"],
         }
@@ -117,6 +121,18 @@ impl Changes<'_> {
         self.transaction.query_row(sql, params, row)
     }
 
+    pub(crate) fn query_rows<T, P: Params>(
+        &self,
+        sql: &str,
+        params: P,
+        row: impl FnMut(&Row<'_>) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<Vec<T>> {
+        self.transaction
+            .prepare(sql)?
+            .query_map(params, row)?
+            .collect()
+    }
+
     /// Adds a row to the table of `entity`, with `fields` as its columns.
     pub(crate) fn insert(
         &mut self,
@@ -134,6 +150,60 @@ impl Changes<'_> {
             params_from_iter(fields.iter().map(|(_, value)| column(value))),
         )?;
         self.log(entity, "upsert", fields)
+    }
+
+    /// Sets the columns in `fields` of the row of `entity` whose key columns, also in `fields`, have the given values.
+    pub(crate) fn update(
+        &mut self,
+        entity: Entity,
+        fields: &[(&'static str, Value)],
+    ) -> anyhow::Result<()> {
+        let key = entity.key();
+        let (keys, set): (Vec<_>, Vec<_>) =
+            fields.iter().partition(|(column, _)| key.contains(column));
+        let assignments: Vec<String> = set
+            .iter()
+            .map(|(column, _)| format!("{column} = ?"))
+            .collect();
+        let conditions: Vec<String> = keys
+            .iter()
+            .map(|(column, _)| format!("{column} = ?"))
+            .collect();
+        let changed = self.transaction.execute(
+            &format!(
+                "UPDATE {} SET {} WHERE {}",
+                entity.table(),
+                assignments.join(", "),
+                conditions.join(" AND ")
+            ),
+            params_from_iter(set.iter().chain(&keys).map(|(_, value)| column(value))),
+        )?;
+        if changed != 1 {
+            let key: Vec<String> = keys
+                .iter()
+                .map(|(_, value)| {
+                    value
+                        .as_str()
+                        .map_or_else(|| value.to_string(), str::to_owned)
+                })
+                .collect();
+            bail!("no {} {}", entity.table(), key.join(":"));
+        }
+        self.log(entity, "upsert", fields)
+    }
+
+    /// The next number of the counter `key` in `meta`, which starts at 1 and never gives a number twice.
+    pub(crate) fn next_number(&mut self, key: &str) -> anyhow::Result<i64> {
+        let number = self.transaction.query_row(
+            "INSERT INTO meta (key, value) VALUES (?1, '1') \
+             ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 \
+             RETURNING value",
+            [key],
+            |row| row.get::<_, String>(0),
+        )?;
+        number
+            .parse()
+            .with_context(|| format!("invalid {key} {number:?}"))
     }
 
     fn log(
