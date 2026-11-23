@@ -12,7 +12,7 @@ use tokio::net::UnixListener;
 use tokio::task::JoinSet;
 
 use crate::node::Node;
-use crate::{paths, router};
+use crate::{paths, process, router};
 
 /// A daemon that holds the single-instance locks, has the node's database open and listens on its socket.
 pub struct Daemon {
@@ -116,6 +116,7 @@ impl Daemon {
         }
 
         connections.shutdown().await;
+        node.processes.shutdown(process::GRACE).await;
         drop(router);
         drop(listener);
         let removed =

@@ -12,6 +12,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWriteExt as _, BufReader};
 use tokio::process::Child;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 use ulid::Ulid;
 
 use crate::node::Node;
@@ -35,29 +36,57 @@ struct Running {
 impl Processes {
     /// Ends the process group of clone `id` with SIGTERM, and SIGKILL after `grace`, and waits until the clone is `stopped`; `false` when the daemon runs no process for it.
     pub(crate) async fn stop(&self, id: Ulid, grace: Duration) -> bool {
-        self.end(id, State::Stopped, None, grace).await
-    }
-
-    async fn end(&self, id: Ulid, state: State, reason: Option<String>, grace: Duration) -> bool {
-        let Some((group, mut ended)) = self.lock().get_mut(&id).map(|running| {
-            running.ending.get_or_insert((state, reason));
-            (running.group, running.ended.clone())
-        }) else {
+        let Some(ending) = self.begin_end(id, State::Stopped, None) else {
             return false;
         };
-        signal(group, Signal::TERM);
-        if tokio::time::timeout(grace, ended.wait_for(|ended| *ended))
-            .await
-            .is_err()
-        {
-            signal(group, Signal::KILL);
-            let _ = ended.wait_for(|ended| *ended).await;
-        }
+        signal(ending.0, Signal::TERM);
+        finish(ending, Instant::now() + grace).await;
         true
+    }
+
+    /// Ends the process groups of all clones the way `stop` does, with `error` and `the daemon stopped` as their state.
+    pub(crate) async fn shutdown(&self, grace: Duration) {
+        let ids: Vec<Ulid> = self.lock().keys().copied().collect();
+        let endings: Vec<_> = ids
+            .into_iter()
+            .filter_map(|id| {
+                self.begin_end(id, State::Error, Some("the daemon stopped".to_owned()))
+            })
+            .collect();
+        for (group, _) in &endings {
+            signal(*group, Signal::TERM);
+        }
+        let deadline = Instant::now() + grace;
+        for ending in endings {
+            finish(ending, deadline).await;
+        }
+    }
+
+    fn begin_end(
+        &self,
+        id: Ulid,
+        state: State,
+        reason: Option<String>,
+    ) -> Option<(Pid, watch::Receiver<bool>)> {
+        self.lock().get_mut(&id).map(|running| {
+            running.ending.get_or_insert((state, reason));
+            (running.group, running.ended.clone())
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<Ulid, Running>> {
         self.running.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Waits until the clone has ended, sending SIGKILL to its group at `deadline`.
+async fn finish((group, mut ended): (Pid, watch::Receiver<bool>), deadline: Instant) {
+    if tokio::time::timeout_at(deadline, ended.wait_for(|ended| *ended))
+        .await
+        .is_err()
+    {
+        signal(group, Signal::KILL);
+        let _ = ended.wait_for(|ended| *ended).await;
     }
 }
 
@@ -109,6 +138,8 @@ pub(crate) fn watch(
             record(&node, id, handle, state, reason).await;
         }
         node.processes.lock().remove(&id);
+        // The node goes first, so the daemon can close the database once every clone has ended.
+        drop(node);
         let _ = done.send(true);
     })
 }
@@ -235,20 +266,29 @@ mod tests {
     const DONE: &str =
         r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"pong"}'"#;
 
-    async fn add_clone(node: &Node) -> Clone {
-        let project = node
-            .store
-            .add_project(node.id, "app", "app", "/code/app")
-            .await
-            .unwrap()
-            .unwrap();
-        let account = node
-            .store
-            .add_account(node.id, "personal", Provider::ClaudeCode, "/data/personal")
-            .await
-            .unwrap()
-            .unwrap();
-        let clone = NewClone {
+    /// A clone on the node's one project and account, which it adds when they are missing.
+    async fn new_clone(node: &Node) -> NewClone {
+        let projects = node.store.projects(node.id).await.unwrap();
+        let project = match projects.into_iter().next() {
+            Some(project) => project,
+            None => node
+                .store
+                .add_project(node.id, "app", "app", "/code/app")
+                .await
+                .unwrap()
+                .unwrap(),
+        };
+        let accounts = node.store.accounts(node.id).await.unwrap();
+        let account = match accounts.into_iter().next() {
+            Some(account) => account,
+            None => node
+                .store
+                .add_account(node.id, "personal", Provider::ClaudeCode, "/data/personal")
+                .await
+                .unwrap()
+                .unwrap(),
+        };
+        NewClone {
             id: Ulid::generate(),
             project_id: project.id,
             repo_id: project.repos[0].id,
@@ -256,7 +296,11 @@ mod tests {
             mode: Mode::Headless,
             checkout: "/data/clones/x/checkout".to_owned(),
             session: "s1".to_owned(),
-        };
+        }
+    }
+
+    async fn add_clone(node: &Node) -> Clone {
+        let clone = new_clone(node).await;
         node.store
             .add_clone(node.id, clone, |handle| format!("branch-{handle}"))
             .await
@@ -437,6 +481,52 @@ mod tests {
         ended(task).await;
         assert!(stopped);
         assert_eq!(shown(&node, &clone).await.state, State::Stopped);
+    }
+
+    #[tokio::test]
+    async fn shutdown_ends_every_clone_with_error_and_waits_for_them() {
+        let dir = TempDir::new().unwrap();
+        let node = open_node(&dir).await;
+        let first = add_clone(&node).await;
+        let second = node
+            .store
+            .add_clone(
+                node.id,
+                NewClone {
+                    id: Ulid::generate(),
+                    session: "s2".to_owned(),
+                    ..new_clone(&node).await
+                },
+                |handle| format!("branch-{handle}"),
+            )
+            .await
+            .unwrap();
+        let mut tasks = Vec::new();
+        for (clone, ready) in [(&first, "first"), (&second, "second")] {
+            let child = sh(&dir, &format!("touch \"$DIR/{ready}\"; sleep 1000"));
+            tasks.push(watch(
+                &node,
+                clone.id,
+                clone.handle,
+                child,
+                String::new(),
+                Vec::new(),
+            ));
+            wait_for(&dir.path().join(ready)).await;
+        }
+
+        node.processes.shutdown(Duration::from_secs(5)).await;
+
+        for task in tasks {
+            ended(task).await;
+        }
+        for clone in [&first, &second] {
+            let shown = shown(&node, clone).await;
+            assert_eq!(
+                (shown.state, shown.reason.as_deref()),
+                (State::Error, Some("the daemon stopped"))
+            );
+        }
     }
 
     #[tokio::test]

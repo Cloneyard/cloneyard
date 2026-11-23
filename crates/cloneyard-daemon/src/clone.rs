@@ -420,6 +420,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_node_marks_the_clones_that_were_working_when_it_closed_as_lost() {
+        let dir = TempDir::new().unwrap();
+        let node = open_node(&dir).await;
+        let clone = with_clone(&node, State::Working).await;
+        drop(node);
+
+        let node = open_node(&dir).await;
+
+        let shown = node
+            .store
+            .clone_by_handle(node.id, clone.handle)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (shown.state, shown.reason.as_deref()),
+            (State::Error, Some("lost while the daemon was down"))
+        );
+    }
+
+    #[tokio::test]
     async fn the_checkout_is_a_shared_clone_on_a_branch_of_its_own_and_leaves_the_repo_alone() {
         let dir = TempDir::new().unwrap();
         let repo = repo(&dir.path().join("app"));

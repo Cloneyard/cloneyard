@@ -15,10 +15,20 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    /// Opens the database in `data_dir` and reads the node id from it, creating both if they are missing.
+    /// Opens the database in `data_dir` and reads the node id from it, creating both if they are missing, and marks the clones that were working as lost.
     pub(crate) async fn open(data_dir: &Path) -> anyhow::Result<Self> {
         let store = Store::open(&paths::database(data_dir)).await?;
         let id = store.node_id().await?;
+        let lost = store
+            .lose_clones(id, "lost while the daemon was down")
+            .await?;
+        if !lost.is_empty() {
+            let handles: Vec<String> = lost.iter().map(ToString::to_string).collect();
+            tracing::warn!(
+                clones = handles.join(", "),
+                "clones lost while the daemon was down"
+            );
+        }
         Ok(Self {
             id,
             store,
