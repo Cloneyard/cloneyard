@@ -5,6 +5,7 @@ The `cloneyard` binary and its short alias `cy`: a thin client of the daemon, an
 ## Commands
 
 - `cy account add <name>` runs `claude auth login` with `accounts/<name>/claude` in the data dir as its config directory, marks Claude Code's first-run screens as seen there and adds the account; a cancelled or failed login removes the directory. `cy accounts` lists the accounts with their providers and directories.
+- `cy clone run --project <p> --account <a> "<prompt>"` starts a headless clone and prints its handle, and fails with the reason when the clone did not start. `cy clones` lists the clones with their projects, accounts, modes and states, `cy clone show <handle>` shows one with its reason, branch, checkout and sessions, and `cy clone stop <handle>` ends a working one.
 - `cy daemon` runs the daemon in the foreground until SIGTERM or Ctrl+C.
 - `cy ping` prints the daemon's version, the node id and the round-trip time of one call.
 - `cy project add <path> [--name <name>]` adds the git repo at the path as a project and prints its name and id; `cy projects` lists the projects with the paths of their repos.
