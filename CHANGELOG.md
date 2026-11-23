@@ -18,5 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cy project add <path>` adds a git repo as a project, and `cy projects` lists the projects with their paths ([#25](https://github.com/Cloneyard/cloneyard/issues/25)).
 - The API's methods have errors of their own, with codes from 1000 and their fields as data ([#25](https://github.com/Cloneyard/cloneyard/issues/25)).
 - `cy account add <name>` logs in to Claude Code in a config directory of its own and adds it as an account, and `cy accounts` lists the accounts ([#29](https://github.com/Cloneyard/cloneyard/issues/29)).
+- `cy clone run --project <p> --account <a> "<prompt>"` runs Claude Code headless in a checkout of its own, and `cy clones`, `cy clone show` and `cy clone stop` list, show and end clones ([#30](https://github.com/Cloneyard/cloneyard/issues/30)).
 
 [Unreleased]: https://github.com/Cloneyard/cloneyard/commits/master
