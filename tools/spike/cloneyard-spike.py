@@ -967,6 +967,33 @@ def t_auth(ctx, r):
     return r.finish(f"{st.get('authMethod', '?')} via {st.get('apiProvider', '?')}, config {st.get('configDirectory', '?')}")
 
 
+def t_first_run(ctx, r):
+    """`cy account add` sets hasCompletedOnboarding instead of showing the first-run screens; no login, no model call."""
+    theme, trust = ("theme", "dark"), ("trust", "folder")
+    screens = {}
+    for name, config in (("new", None), ("onboarded", {"hasCompletedOnboarding": True})):
+        cfg = ctx.work / f"first-run-{name}"
+        if cfg.exists():
+            shutil.rmtree(cfg)
+        cfg.mkdir(parents=True)
+        if config:
+            (cfg / ".claude.json").write_text(json.dumps(config))
+        p = Pty([ctx.claude], ctx.env(pty=True, config_dir=str(cfg)), cfg, ctx.out / f"first-run-{name}-pty.log")
+        try:
+            shown = lambda: re.sub(r"\s+", "", p.screen().lower())
+            wait_until(lambda: all(w in shown() for w in theme) or all(w in shown() for w in trust), 30)
+            time.sleep(1)
+            screens[name] = shown()
+        finally:
+            p.close()
+            shutil.rmtree(cfg, ignore_errors=True)
+    new, onboarded = screens["new"], screens["onboarded"]
+    r.check("a new config dir starts with the theme picker", all(w in new for w in theme), tail(new, 400))
+    r.check("hasCompletedOnboarding skips it to the trust dialog",
+            all(w in onboarded for w in trust) and not all(w in onboarded for w in theme), tail(onboarded, 400))
+    return r.finish()
+
+
 def t_model_probe(ctx, r):
     """One tiny call first, so an auth problem shows up once instead of in every test."""
     repo = ctx.repo("model-probe")
@@ -1438,6 +1465,7 @@ TESTS = [
     # id, function, needs_model, opt_in, what it checks
     ("preflight", t_preflight, False, False, "Claude Code version, flags and subcommands Cloneyard uses; agents --json"),
     ("auth", t_auth, False, False, "logged in, subscription rather than API key"),
+    ("first_run", t_first_run, False, False, "a new config dir shows the theme picker, hasCompletedOnboarding skips it"),
     ("model_probe", t_model_probe, True, False, "one tiny call; gates the other model tests (retries an OAuth refresh clash once)"),
     ("landlock", t_landlock, False, False, "Landlock ABI and real enforcement in a child process"),
     ("seccomp", t_seccomp, False, False, "seccomp available"),
