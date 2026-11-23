@@ -35,3 +35,23 @@ _Avoid_: profile, login
 **Provider**:
 The coding agent CLI that an account logs in to and Cloneyard runs, such as Claude Code.
 _Avoid_: runtime, harness, backend
+
+**Clone**:
+A coding agent that Cloneyard runs on an account, in a checkout of its own, and that you talk to; it stays the same clone across the sessions it goes through.
+_Avoid_: job, worker, instance
+
+**Session**:
+The provider's unit of a clone's work under one id, such as a Claude Code session, which its transcript, hooks and telemetry carry; clearing or forking in the provider starts a new session of the same clone.
+_Avoid_: conversation, thread, run
+
+**Handle**:
+A clone's short name on its node, such as `CT-0042`, for typing; another node can give out the same one, so only the clone's id names it everywhere.
+_Avoid_: id, number, ticket
+
+**Checkout**:
+A clone's own copy of a repo, on a branch of its own, which the clone may change while the repo stays as it was.
+_Avoid_: worktree, working copy, clone
+
+**Headless**:
+The mode of a clone that runs from a prompt without a terminal and reports its state through its output; the other mode is interactive.
+_Avoid_: background, batch, job
