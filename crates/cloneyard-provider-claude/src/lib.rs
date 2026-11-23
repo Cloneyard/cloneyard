@@ -1,10 +1,12 @@
-//! Claude Code as a provider: how Cloneyard starts `claude` for an account.
+//! Claude Code as a provider: how Cloneyard starts `claude` for an account and reads what it prints.
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::Path;
 
 use tokio::process::Command;
+
+pub mod headless;
 
 /// `claude` with `dir` as its config directory, without the variables that would log it in some other way or tie it to a surrounding session.
 #[must_use]
