@@ -262,6 +262,179 @@
           "$ref": "#/components/schemas/AccountListResult"
         }
       }
+    },
+    {
+      "name": "clone.run",
+      "summary": "Starts a headless clone on an account, in a checkout of a project's repo",
+      "params": [
+        {
+          "name": "account",
+          "required": true,
+          "schema": {
+            "description": "The name of the account the clone runs on.",
+            "type": "string"
+          }
+        },
+        {
+          "name": "project",
+          "required": true,
+          "schema": {
+            "description": "The name of the project whose repo the clone gets a checkout of.",
+            "type": "string"
+          }
+        },
+        {
+          "name": "prompt",
+          "required": true,
+          "schema": {
+            "description": "The first message to the clone.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "Clone",
+        "schema": {
+          "$ref": "#/components/schemas/Clone"
+        }
+      },
+      "errors": [
+        {
+          "code": 1200,
+          "message": "No such project",
+          "data": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        {
+          "code": 1201,
+          "message": "No such account",
+          "data": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      ],
+      "paramStructure": "by-name"
+    },
+    {
+      "name": "clone.list",
+      "summary": "Returns the clones on this node",
+      "params": [],
+      "result": {
+        "name": "CloneListResult",
+        "schema": {
+          "$ref": "#/components/schemas/CloneListResult"
+        }
+      }
+    },
+    {
+      "name": "clone.show",
+      "summary": "Returns a clone by its handle",
+      "params": [
+        {
+          "name": "handle",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Handle"
+          }
+        }
+      ],
+      "result": {
+        "name": "Clone",
+        "schema": {
+          "$ref": "#/components/schemas/Clone"
+        }
+      },
+      "errors": [
+        {
+          "code": 1202,
+          "message": "No such clone",
+          "data": {
+            "type": "object",
+            "properties": {
+              "handle": {
+                "$ref": "#/components/schemas/Handle"
+              }
+            },
+            "required": [
+              "handle"
+            ]
+          }
+        }
+      ],
+      "paramStructure": "by-name"
+    },
+    {
+      "name": "clone.stop",
+      "summary": "Ends a clone's process and returns the clone once it has ended",
+      "params": [
+        {
+          "name": "handle",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Handle"
+          }
+        }
+      ],
+      "result": {
+        "name": "Clone",
+        "schema": {
+          "$ref": "#/components/schemas/Clone"
+        }
+      },
+      "errors": [
+        {
+          "code": 1202,
+          "message": "No such clone",
+          "data": {
+            "type": "object",
+            "properties": {
+              "handle": {
+                "$ref": "#/components/schemas/Handle"
+              }
+            },
+            "required": [
+              "handle"
+            ]
+          }
+        },
+        {
+          "code": 1203,
+          "message": "Clone is not running",
+          "data": {
+            "type": "object",
+            "properties": {
+              "handle": {
+                "$ref": "#/components/schemas/Handle"
+              },
+              "state": {
+                "$ref": "#/components/schemas/State"
+              }
+            },
+            "required": [
+              "handle",
+              "state"
+            ]
+          }
+        }
+      ],
+      "paramStructure": "by-name"
     }
   ],
   "components": {
@@ -309,6 +482,86 @@
         ],
         "type": "object"
       },
+      "Clone": {
+        "description": "A coding agent that Cloneyard runs on an account, in a checkout of its own.",
+        "properties": {
+          "account": {
+            "description": "The name of the account the clone runs on.",
+            "type": "string"
+          },
+          "branch": {
+            "description": "The branch of the checkout, which is the clone's own.",
+            "type": "string"
+          },
+          "checkout": {
+            "description": "The path of the checkout on this node.",
+            "type": "string"
+          },
+          "handle": {
+            "$ref": "#/components/schemas/Handle"
+          },
+          "id": {
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode"
+          },
+          "project": {
+            "description": "The name of the project whose repo the checkout is of.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the clone ended in `error`, or null in any other state.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessions": {
+            "description": "In the order they started.",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
+            "type": "array"
+          },
+          "state": {
+            "$ref": "#/components/schemas/State"
+          }
+        },
+        "required": [
+          "id",
+          "handle",
+          "project",
+          "account",
+          "mode",
+          "state",
+          "branch",
+          "checkout",
+          "sessions"
+        ],
+        "type": "object"
+      },
+      "CloneListResult": {
+        "properties": {
+          "clones": {
+            "description": "Sorted by handle.",
+            "items": {
+              "$ref": "#/components/schemas/Clone"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "clones"
+        ],
+        "type": "object"
+      },
+      "Handle": {
+        "description": "A clone's short name on its node, such as `CT-0042`.",
+        "pattern": "^CT-[0-9]{4,}$",
+        "type": "string"
+      },
       "ListResult": {
         "properties": {
           "projects": {
@@ -323,6 +576,15 @@
           "projects"
         ],
         "type": "object"
+      },
+      "Mode": {
+        "oneOf": [
+          {
+            "const": "headless",
+            "description": "Runs without a terminal, from a prompt, and reports its state through its output.",
+            "type": "string"
+          }
+        ]
       },
       "PingResult": {
         "properties": {
@@ -393,6 +655,48 @@
           "path"
         ],
         "type": "object"
+      },
+      "Session": {
+        "description": "One provider session of a clone.",
+        "properties": {
+          "id": {
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          },
+          "provider_id": {
+            "description": "The provider's id of the session, such as Claude Code's `session_id`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider_id"
+        ],
+        "type": "object"
+      },
+      "State": {
+        "oneOf": [
+          {
+            "const": "working",
+            "description": "Its process runs.",
+            "type": "string"
+          },
+          {
+            "const": "done",
+            "description": "It ended its turn without an error.",
+            "type": "string"
+          },
+          {
+            "const": "error",
+            "description": "It failed, or its process ended or was lost before its turn ended.",
+            "type": "string"
+          },
+          {
+            "const": "stopped",
+            "description": "It was stopped on request.",
+            "type": "string"
+          }
+        ]
       },
       "VersionResult": {
         "properties": {
