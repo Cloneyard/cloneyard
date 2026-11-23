@@ -41,7 +41,7 @@ fn is_an_openrpc_1_4_1_document_with_the_crate_version() {
 }
 
 #[test]
-fn lists_every_method_and_only_project_add_takes_params() {
+fn lists_every_method_and_only_the_add_methods_take_params() {
     let document = document();
     let methods = document["methods"].as_array().unwrap();
 
@@ -53,13 +53,14 @@ fn lists_every_method_and_only_project_add_takes_params() {
             "system.version",
             "rpc.discover",
             "project.add",
-            "project.list"
+            "project.list",
+            "account.add",
+            "account.list"
         ]
     );
-    for method in methods
-        .iter()
-        .filter(|method| method["name"] != "project.add")
-    {
+    for method in methods.iter().filter(|method| {
+        !["project.add", "account.add"].contains(&method["name"].as_str().unwrap())
+    }) {
         assert_eq!(method["params"], json!([]), "{method}");
     }
 }
@@ -130,6 +131,101 @@ fn lists_the_errors_of_project_add_with_their_codes_and_fields() {
 }
 
 #[test]
+fn describes_the_params_of_account_add_by_name() {
+    let document = document();
+    let add = method(&document, "account.add");
+
+    assert_eq!(add["paramStructure"], "by-name");
+    let params: Vec<(&Value, &Value, &Value)> = add["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|param| (&param["name"], &param["required"], &param["schema"]))
+        .collect();
+    assert_eq!(
+        params,
+        [
+            (
+                &json!("dir"),
+                &json!(true),
+                &json!({
+                    "description": "The absolute path of the directory that holds the account's login on this node.",
+                    "type": "string"
+                })
+            ),
+            (
+                &json!("name"),
+                &json!(true),
+                &json!({"description": "The name of the account.", "type": "string"})
+            ),
+            (
+                &json!("provider"),
+                &json!(true),
+                &json!({"$ref": "#/components/schemas/Provider"})
+            ),
+        ]
+    );
+}
+
+#[test]
+fn lists_the_errors_of_account_add_with_their_codes_and_fields() {
+    let document = document();
+
+    let errors: Vec<(&Value, &Value, &Value)> = method(&document, "account.add")["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| {
+            (
+                &error["code"],
+                &error["message"],
+                &error["data"]["required"],
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        errors,
+        [
+            (
+                &json!(1100),
+                &json!("Directory is not an absolute path"),
+                &json!(["dir"])
+            ),
+            (
+                &json!(1101),
+                &json!("Path is not a directory"),
+                &json!(["dir"])
+            ),
+            (
+                &json!(1102),
+                &json!("Directory belongs to another account"),
+                &json!(["dir", "account"])
+            ),
+            (
+                &json!(1103),
+                &json!("Account name is taken"),
+                &json!(["name"])
+            ),
+        ]
+    );
+}
+
+#[test]
+fn names_the_provider_by_its_cli_name() {
+    let document = document();
+
+    assert_eq!(
+        document["components"]["schemas"]["Provider"]["oneOf"],
+        json!([{
+            "const": "claude-code",
+            "description": "Claude Code, which keeps each login in a config directory of its own.",
+            "type": "string"
+        }])
+    );
+}
+
+#[test]
 fn results_refer_to_shared_schemas_in_components() {
     let document = document();
 
@@ -145,6 +241,10 @@ fn results_refer_to_shared_schemas_in_components() {
         method(&document, "project.add")["result"]["schema"],
         json!({"$ref": "#/components/schemas/Project"})
     );
+    assert_eq!(
+        method(&document, "account.list")["result"]["schema"],
+        json!({"$ref": "#/components/schemas/AccountListResult"})
+    );
     let schemas: Vec<&String> = document["components"]["schemas"]
         .as_object()
         .unwrap()
@@ -153,9 +253,12 @@ fn results_refer_to_shared_schemas_in_components() {
     assert_eq!(
         schemas,
         [
+            "Account",
+            "AccountListResult",
             "ListResult",
             "PingResult",
             "Project",
+            "Provider",
             "Repo",
             "VersionResult"
         ]

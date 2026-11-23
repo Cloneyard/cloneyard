@@ -12,6 +12,7 @@ use crate::rpc::{
     Components, ContentDescriptor, Document, ErrorObject, Info, MethodObject, ParamStructure,
 };
 
+pub mod account;
 pub mod project;
 pub mod rpc;
 pub mod system;
@@ -100,6 +101,8 @@ pub fn document() -> Document {
         method::<rpc::Discover>(&mut generator),
         method::<project::Add>(&mut generator),
         method::<project::List>(&mut generator),
+        method::<account::Add>(&mut generator),
+        method::<account::List>(&mut generator),
     ];
     Document {
         openrpc: "1.4.1".to_owned(),
