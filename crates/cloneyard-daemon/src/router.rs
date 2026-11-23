@@ -1,13 +1,12 @@
 use std::future;
 use std::sync::Arc;
 
-use cloneyard_api::project::{Add, List};
 use cloneyard_api::rpc::Discover;
 use cloneyard_api::system::{Ping, PingResult, Version, VersionResult};
+use cloneyard_api::{account, project};
 use cloneyard_rpc::{Error, HandlerError, Router};
 
 use crate::node::Node;
-use crate::project;
 
 pub(crate) fn router(node: Arc<Node>) -> Router {
     let document = cloneyard_api::document();
@@ -19,16 +18,30 @@ pub(crate) fn router(node: Arc<Node>) -> Router {
                 version: env!("CARGO_PKG_VERSION").to_owned(),
             })
         })
-        .handle::<Add>({
+        .handle::<project::Add>({
             let node = Arc::clone(&node);
             move |params| {
                 let node = Arc::clone(&node);
-                async move { reply(project::add(&node, params).await) }
+                async move { reply(crate::project::add(&node, params).await) }
             }
         })
-        .handle::<List>(move |()| {
+        .handle::<project::List>({
             let node = Arc::clone(&node);
-            async move { reply(project::list(&node).await.map(Ok)) }
+            move |()| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::project::list(&node).await.map(Ok)) }
+            }
+        })
+        .handle::<account::Add>({
+            let node = Arc::clone(&node);
+            move |params| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::account::add(&node, params).await) }
+            }
+        })
+        .handle::<account::List>(move |()| {
+            let node = Arc::clone(&node);
+            async move { reply(crate::account::list(&node).await.map(Ok)) }
         })
         .handle::<Discover>(move |()| future::ready(Ok(document.clone())))
 }
