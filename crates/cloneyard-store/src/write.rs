@@ -23,6 +23,8 @@ pub(crate) enum Entity {
     Project,
     Repo,
     RepoPath,
+    Account,
+    AccountDir,
 }
 
 impl Entity {
@@ -31,14 +33,17 @@ impl Entity {
             Self::Project => "project",
             Self::Repo => "repo",
             Self::RepoPath => "repo_path",
+            Self::Account => "account",
+            Self::AccountDir => "account_dir",
         }
     }
 
     /// The columns whose values, joined with `:`, are the entity's id in `change_log`.
     fn key(self) -> &'static [&'static str] {
         match self {
-            Self::Project | Self::Repo => &["id"],
+            Self::Project | Self::Repo | Self::Account => &["id"],
             Self::RepoPath => &["repo_id", "node_id"],
+            Self::AccountDir => &["account_id", "node_id"],
         }
     }
 }
