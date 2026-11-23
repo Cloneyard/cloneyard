@@ -1,10 +1,12 @@
 //! The `cloneyard daemon` process: settings, the socket and the methods it serves.
 
 mod account;
+mod clone;
 mod config;
 mod daemon;
 mod node;
 pub mod paths;
+mod process;
 mod project;
 mod router;
 mod run;

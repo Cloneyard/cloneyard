@@ -9,14 +9,17 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 cloneyard-api.workspace = true
+cloneyard-provider-claude.workspace = true
 cloneyard-rpc.workspace = true
 cloneyard-store.workspace = true
+rustix = { version = "1.1.6", features = ["process"] }
 serde.workspace = true
-tokio = { workspace = true, features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

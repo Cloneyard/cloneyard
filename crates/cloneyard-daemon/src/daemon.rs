@@ -40,7 +40,7 @@ impl Daemon {
         let Some(data_lock) = try_lock(&paths::data_lock(data_dir))? else {
             bail!("another cloneyard daemon is using {}", data_dir.display());
         };
-        let node = Node::open(&paths::database(data_dir)).await?;
+        let node = Node::open(data_dir).await?;
 
         // Only the lock holder gets here, so a socket left on disk is stale.
         match fs::remove_file(&socket) {
