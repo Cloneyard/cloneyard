@@ -1,6 +1,6 @@
 # Claude Code contract test
 
-`cloneyard-spike.py` checks that Claude Code still does what Cloneyard relies on: the flags and subcommands it calls, headless sessions in stream-json, hooks through `--plugin-dir` and `--settings`, OpenTelemetry to a local receiver, `--json-schema`, the OSC 7501 terminal states, background sessions, Landlock and the native sandbox. `--list` names every test and what it checks.
+`cloneyard-spike.py` checks that Claude Code still does what Cloneyard relies on: the flags and subcommands it calls, headless sessions in stream-json, hooks through `--plugin-dir` and `--settings`, OpenTelemetry to a local receiver, `--json-schema`, the OSC 7501 terminal states, background sessions, the first-run screens of a new config directory, Landlock and the native sandbox. `--list` names every test and what it checks.
 
 Run it after every Claude Code update, and on a new machine before Cloneyard runs there. It isn't part of CI, because it needs a logged-in account.
 

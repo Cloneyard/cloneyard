@@ -1,12 +1,13 @@
 ---
 title: Getting started
-description: Build Cloneyard from source, start its daemon, check with cy ping that it answers and add a git repo as a project.
+description: Build Cloneyard from source, start its daemon, check with cy ping that it answers, add a git repo as a project and log in to Claude Code.
 ---
 
 ## Requirements
 
 - [rustup](https://rustup.rs): the first build installs the toolchain pinned in `rust-toolchain.toml`.
 - `git` on the daemon's `PATH`, which finds the top level of a repo you add.
+- Claude Code on the `PATH` of the terminal where you add an account.
 - `XDG_RUNTIME_DIR` set to an absolute path, as a systemd login session does.
 
 <Aside type="caution">
@@ -70,5 +71,28 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
    ```
 
    Adding a repo that is already in a project, or a path outside a git working tree, fails with a message that names the path.
+
+6. Log in to Claude Code as an account:
+
+   ```bash
+   ./target/release/cy account add personal
+   ```
+
+   ```text frame="terminal" title="cy account add personal"
+   Hello there.
+   added account personal (01M84Z9N24BDSV22G338Z4YTBT)
+   ```
+
+   Before these lines, `claude auth login` opens your browser to sign in. It logs in to a config directory of the account's own, `accounts/personal/claude` in the data directory, never to `~/.claude`, and Cloneyard marks Claude Code's theme picker and welcome screen as seen there. A taken name fails before the login, and a cancelled or failed login adds nothing.
+
+7. List the accounts:
+
+   ```bash
+   ./target/release/cy accounts
+   ```
+
+   ```text frame="terminal" title="cy accounts"
+   personal  claude-code  /home/you/.local/share/cloneyard/accounts/personal/claude
+   ```
 
 </Steps>
