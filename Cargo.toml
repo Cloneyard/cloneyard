@@ -12,6 +12,7 @@ repository = "https://github.com/Cloneyard/cloneyard"
 anyhow = "1.0.104"
 cloneyard-api = { path = "crates/cloneyard-api" }
 cloneyard-daemon = { path = "crates/cloneyard-daemon" }
+cloneyard-provider-claude = { path = "crates/cloneyard-provider-claude" }
 cloneyard-rpc = { path = "crates/cloneyard-rpc" }
 cloneyard-store = { path = "crates/cloneyard-store" }
 schemars = "1.2.3"
@@ -24,6 +25,7 @@ toml = "1.2.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 ulid = { version = "3.0.0", features = ["serde"] }
+uuid = { version = "1.29.3", features = ["v4"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

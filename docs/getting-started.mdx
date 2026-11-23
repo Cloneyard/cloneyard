@@ -1,13 +1,13 @@
 ---
 title: Getting started
-description: Build Cloneyard from source, start its daemon, check with cy ping that it answers, add a git repo as a project and log in to Claude Code.
+description: Build Cloneyard from source, start its daemon, add a git repo as a project, log in to Claude Code and run a first clone on them.
 ---
 
 ## Requirements
 
 - [rustup](https://rustup.rs): the first build installs the toolchain pinned in `rust-toolchain.toml`.
-- `git` on the daemon's `PATH`, which finds the top level of a repo you add.
-- Claude Code on the `PATH` of the terminal where you add an account.
+- `git` on the daemon's `PATH`, which finds the top level of a repo you add and makes the checkouts of clones.
+- Claude Code on the `PATH` of the terminal where you add an account, and on the daemon's, which runs clones.
 - `XDG_RUNTIME_DIR` set to an absolute path, as a systemd login session does.
 
 <Aside type="caution">
@@ -48,7 +48,7 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
 
    The node id stays the same after the daemon restarts.
 
-4. Add the clone as a project:
+4. Add your copy of the repo as a project:
 
    ```bash
    ./target/release/cy project add .
@@ -94,5 +94,57 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
    ```text frame="terminal" title="cy accounts"
    personal  claude-code  /home/you/.local/share/cloneyard/accounts/personal/claude
    ```
+
+8. Run a clone on the project and the account:
+
+   ```bash
+   ./target/release/cy clone run --project cloneyard --account personal "Say pong"
+   ```
+
+   ```text frame="terminal" title="cy clone run --project cloneyard --account personal"
+   CT-0001
+   ```
+
+   The clone is a headless `claude -p` in a checkout of its own: a `git clone --shared` of the repo's last commit on branch `cloneyard/ct-0001`, which never writes to the repo. Your uncommitted changes stay out of it. Claude Code keeps the clone's answer in its transcript in the account's directory.
+
+   <Aside type="caution">
+   Clones have no sandbox yet, so a clone runs as your user. Claude Code's default permission mode denies its edits and commands, unless the repo's own `.claude/settings.json` allows them.
+   </Aside>
+
+9. List the clones:
+
+   ```bash
+   ./target/release/cy clones
+   ```
+
+   ```text frame="terminal" title="cy clones"
+   CT-0001  cloneyard  personal  headless  done
+   ```
+
+   A clone is `working` until Claude Code's answer ends its turn, then `done`, or `error` with the reason. One that is still working when the daemon stops ends `error`.
+
+10. Show a clone, by its handle or as `ct-1`:
+
+    ```bash
+    ./target/release/cy clone show CT-0001
+    ```
+
+    ```text frame="terminal" title="cy clone show CT-0001"
+    handle    CT-0001
+    id        01M8F3K2Q9V7T4R6N5X1C0B8ZD
+    project   cloneyard
+    account   personal
+    mode      headless
+    state     done
+    branch    cloneyard/ct-0001
+    checkout  /home/you/.local/share/cloneyard/clones/01M8F3K2Q9V7T4R6N5X1C0B8ZD/checkout
+    session   5f0c8d2e-7b1a-4c3e-9d6f-2a8b4e1c7d90
+    ```
+
+    `cy clone stop CT-0001` ends a clone that is still working and prints `stopped CT-0001`.
+
+    <Aside type="caution">
+    Don't run git or an IDE in a clone's checkout: its `.git`, with its config and hooks, belongs to the clone.
+    </Aside>
 
 </Steps>

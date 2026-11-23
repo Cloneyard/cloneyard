@@ -1,13 +1,11 @@
-use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
-use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 
 use anyhow::Context as _;
+use cloneyard_provider_claude::command;
 use serde_json::{Map, Value};
-use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
 
 /// Runs `claude auth login` on this terminal with `dir` as its config directory, and tells whether `dir` holds a login afterwards.
@@ -19,12 +17,12 @@ pub(crate) fn log_in(dir: &Path) -> anyhow::Result<bool> {
     runtime.block_on(async {
         // Ctrl+C reaches claude as well; with a handler in place, cy outlives it and cleans up.
         let _interrupt = signal(SignalKind::interrupt()).context("cannot handle SIGINT")?;
-        claude(dir)
+        command(dir)
             .args(["auth", "login"])
             .status()
             .await
             .context("cannot run claude")?;
-        let status = claude(dir)
+        let status = command(dir)
             .args(["auth", "status", "--json"])
             .output()
             .await
@@ -60,17 +58,4 @@ pub(crate) fn skip_onboarding(dir: &Path) -> anyhow::Result<()> {
         .and_then(|mut file| file.write_all(&json))
         .with_context(|| format!("cannot write {}", temporary.display()))?;
     fs::rename(&temporary, &path).with_context(|| format!("cannot write {}", path.display()))
-}
-
-/// `claude` with `dir` as its config directory, without the variables that would log it in some other way or tie it to a surrounding session.
-fn claude(dir: &Path) -> Command {
-    let mut claude = Command::new("claude");
-    for (name, _) in std::env::vars_os() {
-        let bytes = name.as_bytes();
-        if bytes.starts_with(b"ANTHROPIC_") || bytes.starts_with(b"CLAUDE") {
-            claude.env_remove(&name);
-        }
-    }
-    claude.env(OsStr::new("CLAUDE_CONFIG_DIR"), dir);
-    claude
 }

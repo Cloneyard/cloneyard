@@ -446,13 +446,16 @@ class StreamSession:
         return wait_until(lambda: len(self.of_type("result")) >= n or self.p.poll() is not None, timeout)
 
     def close(self, timeout=30):
+        """Closes stdin and waits for the process; `ended_on_eof` tells whether it ended without a signal."""
         try:
             self.p.stdin.close()
         except OSError:
             pass
         try:
             self.p.wait(timeout=timeout)
+            self.ended_on_eof = True
         except subprocess.TimeoutExpired:
+            self.ended_on_eof = False
             self.p.terminate()
             try:
                 self.p.wait(timeout=5)
@@ -1138,6 +1141,7 @@ def t_headless(ctx, r):
         aks = init.get("apiKeySource")
         r.check("plan auth (apiKeySource none)", aks in (None, "none"), f"apiKeySource={aks}", critical=False)
     r.check("two turns on one process", len(results) >= 2 and alive_after_turn1, f"results={len(results)} rc={rc}")
+    r.check("ends by itself once stdin closes after the last result", s.ended_on_eof and rc == 0, f"rc={rc}")
     if results:
         r.data["result_keys"] = sorted(results[0].keys())
         r.data["turns"] = [
@@ -1472,7 +1476,7 @@ TESTS = [
     ("bwrap", t_bwrap, False, False, "bubblewrap + socat for the native CC sandbox, user namespaces"),
     ("headless", t_headless, True, False,
      "stream-json multi-turn on one process, --session-id, --append-system-prompt-file, plugin + --settings hooks, "
-     "--permission-prompts none, rate_limit_event, local OTLP/HTTP JSON receiver"),
+     "--permission-prompts none, rate_limit_event, local OTLP/HTTP JSON receiver, the end on stdin EOF"),
     ("json_schema", t_json_schema, True, False, "--json-schema structured output"),
     ("cc_sandbox", t_cc_sandbox, True, False, "native CC sandbox: Bash auto-allowed inside cwd, blocked outside"),
     ("osc7501", t_osc7501, True, False, "interactive session in a PTY: OSC 7501 probe, idle/working/done/blocked, clear"),

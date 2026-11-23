@@ -1,0 +1,15 @@
+[package]
+name = "cloneyard-provider-claude"
+description = "Claude Code as a provider of Cloneyard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

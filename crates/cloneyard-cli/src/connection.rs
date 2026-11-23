@@ -15,6 +15,14 @@ pub(crate) type DaemonClient = Client<OwnedReadHalf, OwnedWriteHalf>;
 pub(crate) fn with_client<T>(
     calls: impl AsyncFnOnce(&mut DaemonClient) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
+    with_client_within(TIMEOUT, calls)
+}
+
+/// [`with_client`] with a timeout of its own, for calls that take longer than most.
+pub(crate) fn with_client_within<T>(
+    timeout: Duration,
+    calls: impl AsyncFnOnce(&mut DaemonClient) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
     let socket = paths::socket(&paths::runtime_dir()?);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -38,8 +46,8 @@ pub(crate) fn with_client<T>(
         };
         let (reader, writer) = stream.into_split();
         let mut client = Client::new(reader, writer);
-        tokio::time::timeout(TIMEOUT, calls(&mut client))
+        tokio::time::timeout(timeout, calls(&mut client))
             .await
-            .with_context(|| format!("the daemon did not answer within {} s", TIMEOUT.as_secs()))?
+            .with_context(|| format!("the daemon did not answer within {} s", timeout.as_secs()))?
     })
 }

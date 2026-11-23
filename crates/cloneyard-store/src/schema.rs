@@ -13,6 +13,7 @@ pub(crate) fn migrations() -> Vec<M<'static>> {
         M::up(include_str!("../migrations/0002-repo-path.sql")),
         M::up(include_str!("../migrations/0003-change-log-ops.sql")),
         M::up(include_str!("../migrations/0004-account.sql")),
+        M::up(include_str!("../migrations/0005-clone.sql")),
     ]
 }
 
@@ -92,6 +93,9 @@ mod tests {
     const OTHER_PROJECT: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XB";
     const ACCOUNT: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XC";
     const OTHER_ACCOUNT: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XD";
+    const REPO: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XE";
+    const CLONE: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XF";
+    const OTHER_CLONE: &str = "01K9Z3V6Y8Q2N5M7P4R1T0W3XG";
 
     fn open_latest(dir: &TempDir) -> Connection {
         open(&dir.path().join("cloneyard.db"), migrations()).unwrap()
@@ -166,7 +170,7 @@ mod tests {
 
         let connection = open_latest(&dir);
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
         assert_eq!(pragma::<String>(&connection, "journal_mode"), "wal");
         assert_eq!(pragma::<i64>(&connection, "foreign_keys"), 1);
         assert!(!dir.path().join("backups").exists());
@@ -198,7 +202,7 @@ mod tests {
 
         let after = unix_seconds();
         let expected = vec![("cloneyard".to_owned(), "api".to_owned())];
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
         let paths: i64 = connection
             .query_row("SELECT count(*) FROM repo_path", [], |row| row.get(0))
             .unwrap();
@@ -233,7 +237,7 @@ mod tests {
 
         let connection = open(&path, migrations()).unwrap();
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 4);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
         let counts: (i64, i64, i64) = connection
             .query_row(
                 "SELECT (SELECT count(*) FROM project), (SELECT count(*) FROM account), \
@@ -246,6 +250,67 @@ mod tests {
         let [backup] = backups(&dir).try_into().unwrap();
         let name = backup.file_name().unwrap().to_str().unwrap();
         assert!(name.starts_with("cloneyard-v3-"), "{name}");
+    }
+
+    #[test]
+    fn backs_up_a_v4_database_before_adding_the_clone_tables() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cloneyard.db");
+        let v4: Vec<M<'static>> = migrations().into_iter().take(4).collect();
+        let connection = open(&path, v4).unwrap();
+        connection
+            .execute(
+                "INSERT INTO account (id, name, provider) VALUES (?1, 'personal', 'claude-code')",
+                [ACCOUNT],
+            )
+            .unwrap();
+        drop(connection);
+
+        let connection = open(&path, migrations()).unwrap();
+
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
+        let counts: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT (SELECT count(*) FROM account), (SELECT count(*) FROM clone), \
+                 (SELECT count(*) FROM session)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 0, 0));
+        let [backup] = backups(&dir).try_into().unwrap();
+        let name = backup.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("cloneyard-v4-"), "{name}");
+    }
+
+    #[test]
+    fn a_handle_belongs_to_one_clone_on_a_node() {
+        let dir = TempDir::new().unwrap();
+        let connection = with_projects(&dir);
+        add_repo(&connection, REPO, PROJECT, "cloneyard", None).unwrap();
+        connection
+            .execute(
+                "INSERT INTO account (id, name, provider) VALUES (?1, 'personal', 'claude-code')",
+                [ACCOUNT],
+            )
+            .unwrap();
+        let add_clone = |id: &str, node_id: &str| {
+            connection.execute(
+                "INSERT INTO clone (id, node_id, handle, project_id, repo_id, account_id, mode, \
+                 state, branch, checkout) \
+                 VALUES (?1, ?2, 1, ?3, ?4, ?5, 'headless', 'working', 'cloneyard/ct-0001', '/c')",
+                [id, node_id, PROJECT, REPO, ACCOUNT],
+            )
+        };
+        add_clone(CLONE, "01K9Z3V6Y8Q2N5M7P4R1T0W3Y0").unwrap();
+
+        let error = add_clone(OTHER_CLONE, "01K9Z3V6Y8Q2N5M7P4R1T0W3Y0").unwrap_err();
+        add_clone(OTHER_CLONE, "01K9Z3V6Y8Q2N5M7P4R1T0W3Y1").unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "UNIQUE constraint failed: clone.node_id, clone.handle"
+        );
     }
 
     #[test]
@@ -290,13 +355,13 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "database schema v6 is newer than this cloneyard (v4); \
+                "database schema v7 is newer than this cloneyard (v5); \
                  upgrade cloneyard or restore a file from {}",
                 dir.path().join("backups").display()
             )
         );
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 6);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 7);
     }
 
     #[test]

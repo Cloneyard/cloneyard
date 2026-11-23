@@ -12,7 +12,7 @@ use tokio::net::UnixListener;
 use tokio::task::JoinSet;
 
 use crate::node::Node;
-use crate::{paths, router};
+use crate::{paths, process, router};
 
 /// A daemon that holds the single-instance locks, has the node's database open and listens on its socket.
 pub struct Daemon {
@@ -40,7 +40,7 @@ impl Daemon {
         let Some(data_lock) = try_lock(&paths::data_lock(data_dir))? else {
             bail!("another cloneyard daemon is using {}", data_dir.display());
         };
-        let node = Node::open(&paths::database(data_dir)).await?;
+        let node = Node::open(data_dir).await?;
 
         // Only the lock holder gets here, so a socket left on disk is stale.
         match fs::remove_file(&socket) {
@@ -116,6 +116,7 @@ impl Daemon {
         }
 
         connections.shutdown().await;
+        node.processes.shutdown(process::GRACE).await;
         drop(router);
         drop(listener);
         let removed =

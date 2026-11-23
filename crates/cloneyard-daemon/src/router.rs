@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use cloneyard_api::rpc::Discover;
 use cloneyard_api::system::{Ping, PingResult, Version, VersionResult};
-use cloneyard_api::{account, project};
+use cloneyard_api::{account, clone, project};
 use cloneyard_rpc::{Error, HandlerError, Router};
 
 use crate::node::Node;
@@ -39,9 +39,37 @@ pub(crate) fn router(node: Arc<Node>) -> Router {
                 async move { reply(crate::account::add(&node, params).await) }
             }
         })
-        .handle::<account::List>(move |()| {
+        .handle::<account::List>({
             let node = Arc::clone(&node);
-            async move { reply(crate::account::list(&node).await.map(Ok)) }
+            move |()| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::account::list(&node).await.map(Ok)) }
+            }
+        })
+        .handle::<clone::Run>({
+            let node = Arc::clone(&node);
+            move |params| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::clone::run(&node, params).await) }
+            }
+        })
+        .handle::<clone::List>({
+            let node = Arc::clone(&node);
+            move |()| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::clone::list(&node).await.map(Ok)) }
+            }
+        })
+        .handle::<clone::Show>({
+            let node = Arc::clone(&node);
+            move |params| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::clone::show(&node, params).await) }
+            }
+        })
+        .handle::<clone::Stop>(move |params| {
+            let node = Arc::clone(&node);
+            async move { reply(crate::clone::stop(&node, params).await) }
         })
         .handle::<Discover>(move |()| future::ready(Ok(document.clone())))
 }
@@ -69,7 +97,7 @@ pub(crate) mod tests {
     pub(crate) type TestClient = Client<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 
     pub(crate) async fn open_node(dir: &TempDir) -> Arc<Node> {
-        Arc::new(Node::open(&dir.path().join("cloneyard.db")).await.unwrap())
+        Arc::new(Node::open(dir.path()).await.unwrap())
     }
 
     pub(crate) fn connect(node: Arc<Node>) -> TestClient {

@@ -13,6 +13,7 @@ use crate::rpc::{
 };
 
 pub mod account;
+pub mod clone;
 pub mod project;
 pub mod rpc;
 pub mod system;
@@ -103,6 +104,10 @@ pub fn document() -> Document {
         method::<project::List>(&mut generator),
         method::<account::Add>(&mut generator),
         method::<account::List>(&mut generator),
+        method::<clone::Run>(&mut generator),
+        method::<clone::List>(&mut generator),
+        method::<clone::Show>(&mut generator),
+        method::<clone::Stop>(&mut generator),
     ];
     Document {
         openrpc: "1.4.1".to_owned(),

@@ -41,7 +41,7 @@ fn is_an_openrpc_1_4_1_document_with_the_crate_version() {
 }
 
 #[test]
-fn lists_every_method_and_only_the_add_methods_take_params() {
+fn lists_every_method_and_which_of_them_take_params() {
     let document = document();
     let methods = document["methods"].as_array().unwrap();
 
@@ -55,14 +55,28 @@ fn lists_every_method_and_only_the_add_methods_take_params() {
             "project.add",
             "project.list",
             "account.add",
-            "account.list"
+            "account.list",
+            "clone.run",
+            "clone.list",
+            "clone.show",
+            "clone.stop"
         ]
     );
-    for method in methods.iter().filter(|method| {
-        !["project.add", "account.add"].contains(&method["name"].as_str().unwrap())
-    }) {
-        assert_eq!(method["params"], json!([]), "{method}");
-    }
+    let with_params: Vec<&Value> = methods
+        .iter()
+        .filter(|method| method["params"] != json!([]))
+        .map(|method| &method["name"])
+        .collect();
+    assert_eq!(
+        with_params,
+        [
+            "project.add",
+            "account.add",
+            "clone.run",
+            "clone.show",
+            "clone.stop"
+        ]
+    );
 }
 
 #[test]
@@ -212,6 +226,87 @@ fn lists_the_errors_of_account_add_with_their_codes_and_fields() {
 }
 
 #[test]
+fn describes_the_params_of_clone_run_by_name() {
+    let document = document();
+
+    let params: Vec<(&Value, &Value)> = method(&document, "clone.run")["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|param| (&param["name"], &param["required"]))
+        .collect();
+
+    assert_eq!(
+        params,
+        [
+            (&json!("account"), &json!(true)),
+            (&json!("project"), &json!(true)),
+            (&json!("prompt"), &json!(true)),
+        ]
+    );
+}
+
+#[test]
+fn lists_the_errors_of_the_clone_methods_with_their_codes_and_fields() {
+    let document = document();
+    let errors = |name: &str| -> Vec<(Value, Value, Value)> {
+        method(&document, name)["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|error| {
+                (
+                    error["code"].clone(),
+                    error["message"].clone(),
+                    error["data"]["required"].clone(),
+                )
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        errors("clone.run"),
+        [
+            (json!(1200), json!("No such project"), json!(["name"])),
+            (json!(1201), json!("No such account"), json!(["name"])),
+        ]
+    );
+    assert_eq!(
+        errors("clone.show"),
+        [(json!(1202), json!("No such clone"), json!(["handle"]))]
+    );
+    assert_eq!(
+        errors("clone.stop"),
+        [
+            (json!(1202), json!("No such clone"), json!(["handle"])),
+            (
+                json!(1203),
+                json!("Clone is not running"),
+                json!(["handle", "state"])
+            ),
+        ]
+    );
+}
+
+#[test]
+fn describes_a_handle_as_ct_and_at_least_four_digits() {
+    let document = document();
+
+    assert_eq!(
+        document["components"]["schemas"]["Handle"],
+        json!({
+            "description": "A clone's short name on its node, such as `CT-0042`.",
+            "type": "string",
+            "pattern": "^CT-[0-9]{4,}$"
+        })
+    );
+    assert_eq!(
+        method(&document, "clone.show")["params"][0]["schema"],
+        json!({"$ref": "#/components/schemas/Handle"})
+    );
+}
+
+#[test]
 fn names_the_provider_by_its_cli_name() {
     let document = document();
 
@@ -255,11 +350,17 @@ fn results_refer_to_shared_schemas_in_components() {
         [
             "Account",
             "AccountListResult",
+            "Clone",
+            "CloneListResult",
+            "Handle",
             "ListResult",
+            "Mode",
             "PingResult",
             "Project",
             "Provider",
             "Repo",
+            "Session",
+            "State",
             "VersionResult"
         ]
     );

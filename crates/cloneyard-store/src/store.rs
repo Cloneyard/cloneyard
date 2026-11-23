@@ -298,7 +298,7 @@ impl Store {
         .context("cannot list the accounts")
     }
 
-    async fn call<T: Send + 'static>(
+    pub(crate) async fn call<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut Connection) -> anyhow::Result<T> + Send + 'static,
     ) -> anyhow::Result<T> {
@@ -307,7 +307,7 @@ impl Store {
     }
 
     /// Runs `work` in one transaction, in which each change of an entity adds its `change_log` row.
-    async fn write<T: Send + 'static>(
+    pub(crate) async fn write<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut Changes<'_>) -> anyhow::Result<T> + Send + 'static,
     ) -> anyhow::Result<T> {
@@ -331,7 +331,7 @@ impl Store {
     }
 }
 
-fn ulid(id: &str) -> anyhow::Result<Ulid> {
+pub(crate) fn ulid(id: &str) -> anyhow::Result<Ulid> {
     Ulid::from_string(id).with_context(|| format!("invalid id {id:?}"))
 }
 
@@ -351,7 +351,7 @@ impl Drop for Store {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -365,23 +365,23 @@ mod tests {
     use super::Store;
     use crate::write::Entity;
 
-    const NOW: i64 = 1_790_000_000_000;
+    pub(crate) const NOW: i64 = 1_790_000_000_000;
 
     #[derive(Debug, PartialEq)]
-    struct Logged {
-        node_id: String,
-        hlc: i64,
-        entity: String,
-        entity_id: String,
-        op: String,
-        fields: Value,
+    pub(crate) struct Logged {
+        pub(crate) node_id: String,
+        pub(crate) hlc: i64,
+        pub(crate) entity: String,
+        pub(crate) entity_id: String,
+        pub(crate) op: String,
+        pub(crate) fields: Value,
     }
 
-    async fn open(dir: &TempDir) -> Store {
+    pub(crate) async fn open(dir: &TempDir) -> Store {
         Store::open(&dir.path().join("cloneyard.db")).await.unwrap()
     }
 
-    async fn open_at(dir: &TempDir, now: &Arc<AtomicI64>) -> Store {
+    pub(crate) async fn open_at(dir: &TempDir, now: &Arc<AtomicI64>) -> Store {
         let now = Arc::clone(now);
         let clock = Box::new(move || now.load(Ordering::SeqCst));
         Store::open_with(&dir.path().join("cloneyard.db"), clock)
@@ -389,11 +389,11 @@ mod tests {
             .unwrap()
     }
 
-    fn sql(dir: &TempDir) -> Connection {
+    pub(crate) fn sql(dir: &TempDir) -> Connection {
         Connection::open(dir.path().join("cloneyard.db")).unwrap()
     }
 
-    fn change_log(dir: &TempDir) -> Vec<Logged> {
+    pub(crate) fn change_log(dir: &TempDir) -> Vec<Logged> {
         sql(dir)
             .prepare(
                 "SELECT node_id, hlc, entity, entity_id, op, fields FROM change_log ORDER BY rowid",
