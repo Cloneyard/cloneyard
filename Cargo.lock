@@ -172,6 +172,7 @@ dependencies = [
  "clap",
  "cloneyard-api",
  "cloneyard-daemon",
+ "cloneyard-provider-claude",
  "cloneyard-rpc",
  "serde_json",
  "tempfile",
@@ -194,6 +195,13 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+]
+
+[[package]]
+name = "cloneyard-provider-claude"
+version = "0.0.1"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]
