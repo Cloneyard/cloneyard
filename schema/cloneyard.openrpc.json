@@ -328,6 +328,21 @@
               "name"
             ]
           }
+        },
+        {
+          "code": 1204,
+          "message": "No sandbox for clones on this node",
+          "data": {
+            "type": "object",
+            "properties": {
+              "config": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "config"
+            ]
+          }
         }
       ],
       "paramStructure": "by-name"
