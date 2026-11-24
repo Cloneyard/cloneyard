@@ -855,28 +855,100 @@ def landlock_apply(ro_paths, rw_paths):
     return abi
 
 
+# The filter of cloneyard-sandbox: socket(AF_UNIX) other than datagram fails with EACCES, io_uring with EPERM,
+# and a syscall of another ABI kills the process.
+SECCOMP_ARCH = {"x86_64": (0xC000003E, 41), "aarch64": (0xC00000B7, 198)}
+X32_BIT = 0x40000000
+IO_URING = (425, 426, 427)
+AF_UNIX, SOCK_STREAM, SOCK_SEQPACKET, SOCK_TYPE_MASK = 1, 1, 5, 0xF
+RET_ALLOW, RET_KILL_PROCESS, RET_ERRNO = 0x7FFF0000, 0x80000000, 0x00050000
+EACCES, EPERM = 13, 1
+
+
+def seccomp_program():
+    arch, socket_nr = SECCOMP_ARCH[platform.machine()]
+    x32 = platform.machine() == "x86_64"
+    sockets = [socket_nr] + ([socket_nr | X32_BIT] if x32 else [])
+    io_uring = list(IO_URING) + ([nr | X32_BIT for nr in IO_URING] if x32 else [])
+    ld, jeq, ret, alu_and = 0x20, 0x15, 0x06, 0x54
+    prog = []  # (code, jt, jf, k) with jt/jf as labels until resolved
+
+    def op(code, k, jt=0, jf=0):
+        prog.append([code, jt, jf, k])
+
+    op(ld, 4)
+    op(jeq, arch, 1, 0)
+    op(ret, RET_KILL_PROCESS)
+    op(ld, 0)
+    for nr in sockets:
+        op(jeq, nr, "socket", 0)
+    for nr in io_uring:
+        op(jeq, nr, "eperm", 0)
+    op(ret, RET_ALLOW)
+    labels = {"socket": len(prog)}
+    op(ld, 16)
+    op(jeq, AF_UNIX, 0, "allow")
+    op(ld, 24)
+    op(alu_and, SOCK_TYPE_MASK)
+    op(jeq, SOCK_STREAM, "eacces", 0)
+    op(jeq, SOCK_SEQPACKET, "eacces", 0)
+    labels["allow"] = len(prog)
+    op(ret, RET_ALLOW)
+    labels["eacces"] = len(prog)
+    op(ret, RET_ERRNO | EACCES)
+    labels["eperm"] = len(prog)
+    op(ret, RET_ERRNO | EPERM)
+    for i, ins in enumerate(prog):
+        for j in (1, 2):
+            if isinstance(ins[j], str):
+                ins[j] = labels[ins[j]] - i - 1
+    return prog
+
+
+def seccomp_apply():
+    class SockFilter(ctypes.Structure):
+        _fields_ = [("code", ctypes.c_uint16), ("jt", ctypes.c_uint8), ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]
+
+    class SockFprog(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_uint16), ("filter", ctypes.POINTER(SockFilter))]
+
+    prog = seccomp_program()
+    filters = (SockFilter * len(prog))(*[SockFilter(*ins) for ins in prog])
+    fprog = SockFprog(len(prog), filters)
+    libc = _libc()
+    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+        raise OSError(ctypes.get_errno(), "prctl(NO_NEW_PRIVS)")
+    if libc.prctl(22, 2, ctypes.byref(fprog), 0, 0) != 0:  # PR_SET_SECCOMP, SECCOMP_MODE_FILTER
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_SECCOMP)")
+
+
 def landlock_exec_main(argv):
-    """Internal mode: --_landlock-exec [--rw P]... -- CMD ARGS..."""
-    rw, i = [], 0
+    """Internal mode: --_landlock-exec [--rw P]... [--seccomp] -- CMD ARGS..."""
+    rw, i, seccomp = [], 0, False
     while i < len(argv) and argv[i] != "--":
         if argv[i] == "--rw":
             rw.append(argv[i + 1])
             i += 2
         else:
+            seccomp = seccomp or argv[i] == "--seccomp"
             i += 1
     cmd = argv[i + 1:]
     try:
         landlock_apply(["/"], rw)
+        if seccomp:
+            seccomp_apply()
     except OSError as e:
-        sys.stderr.write(f"[spike] landlock: {e}\n")
+        sys.stderr.write(f"[spike] sandbox: {e}\n")
         os._exit(97)
     os.execvp(cmd[0], cmd)
 
 
-def landlock_wrap(rw_paths, cmd):
+def landlock_wrap(rw_paths, cmd, seccomp=False):
     argv = [sys.executable, os.path.abspath(__file__), "--_landlock-exec"]
     for p in rw_paths:
         argv += ["--rw", str(p)]
+    if seccomp:
+        argv.append("--seccomp")
     return argv + ["--"] + list(cmd)
 
 
@@ -1073,8 +1145,23 @@ def t_seccomp(ctx, r):
         r.check("seccomp present", m is not None, "", critical=False)
     except OSError as e:
         r.check("seccomp present", False, str(e), critical=False)
-    r.status = "INFO" if r.checks and r.checks[0]["ok"] else r.status
-    return r.finish("seccomp filter mode available" if r.data.get("seccomp_field") is not None else None)
+    if platform.machine() not in SECCOMP_ARCH or landlock_abi() is None or landlock_abi() < 1:
+        return r.finish("filter not checked: needs Landlock on x86_64 or aarch64")
+    probe = (
+        "import socket, sys\n"
+        "def opens(kind):\n"
+        "    try:\n"
+        "        socket.socket(socket.AF_UNIX, kind).close(); return 'ok'\n"
+        "    except PermissionError:\n"
+        "        return 'EACCES'\n"
+        "a, b = socket.socketpair(); a.close(); b.close()\n"
+        "print(opens(socket.SOCK_STREAM), opens(socket.SOCK_SEQPACKET), opens(socket.SOCK_DGRAM))\n"
+    )
+    rc, out, err, _ = run(landlock_wrap([], [sys.executable, "-I", "-c", probe], seccomp=True), timeout=30)
+    r.data["filter_probe"] = out.strip()
+    r.check("Cloneyard's filter: Unix stream and seqpacket fail, datagram and socketpair work",
+            rc == 0 and out.split() == ["EACCES", "EACCES", "ok"], f"rc={rc} {out.strip()} {tail(err, 300)}")
+    return r.finish()
 
 
 def t_bwrap(ctx, r):
@@ -1098,6 +1185,13 @@ def t_bwrap(ctx, r):
         if rc != 0 and r.data.get("apparmor_restrict_unprivileged_userns") == "1":
             hint = " (Ubuntu 24.04+: AppArmor blocks unprivileged user namespaces; needs a bwrap profile)"
         r.check("bwrap can create a sandbox", rc == 0, tail(err, 300) + hint)
+        abi = landlock_abi()
+        if rc == 0 and abi and abi >= 1:
+            rc2, _, err2, _ = run(landlock_wrap(["/tmp", "/dev"], [bw, "--ro-bind", "/", "/", "--dev", "/dev",
+                                                                   "--unshare-net", "true"]), timeout=20)
+            r.data["bwrap_inside_landlock"] = {"rc": rc2, "stderr": tail(err2, 300)}
+            r.check("bwrap fails inside Landlock, so clones turn Claude Code's sandbox off", rc2 != 0,
+                    "bwrap runs inside Landlock now: revisit ADR 0012", critical=False)
     return r.finish()
 
 
@@ -1392,6 +1486,70 @@ def t_landlock_claude(ctx, r):
     return r.finish("needs more than the narrow list (see attempt1 stderr)" if ok2 else None)
 
 
+def _sandbox_rw(ctx, repo, caches):
+    rw = [str(repo), "/tmp", "/dev", str(caches)]
+    if ctx.config_dir:
+        return rw + [str(ctx.config_dir)]
+    home = Path.home()
+    return rw + [str(home / ".claude"), str(home / ".claude.json"), str(home / ".claude.json.backup")]
+
+
+def _sandbox_env(ctx, caches):
+    return ctx.env({"DISABLE_AUTOUPDATER": "1", "XDG_CACHE_HOME": str(caches)})
+
+
+def t_sandbox_claude(ctx, r):
+    abi = landlock_abi()
+    if not abi or abi < 1 or platform.machine() not in SECCOMP_ARCH:
+        return r.skip("Landlock or the seccomp filter unavailable")
+    repo = ctx.repo("sandbox-claude")
+    caches = ctx.work / "sandbox-caches"
+    caches.mkdir(exist_ok=True)
+    hook_log = repo / "hooks.jsonl"
+    _, hook_py = make_plugin(ctx, "plugin-sandbox", hook_log)
+    settings = {"sandbox": {"enabled": False}, **settings_hooks(hook_py, hook_log)}
+    cmd = [ctx.claude, "-p", PONG_PROMPT, "--model", ctx.model, "--output-format", "json", "--tools", "",
+           "--settings", json.dumps(settings)]
+    rw = _sandbox_rw(ctx, repo, caches)
+    r.data["rw"] = rw
+    rc, out, err, _ = run(landlock_wrap(rw, cmd, seccomp=True), env=_sandbox_env(ctx, caches), cwd=repo,
+                          timeout=ctx.args.timeout)
+    r.data["result"] = {"rc": rc, "stderr": tail(err, 800), "stdout": tail(out, 400)}
+    r.check("claude -p works under Landlock and seccomp with a clone's write list",
+            rc == 0 and "pong" in out.lower(), tail(err, 400))
+    events = sorted({e.get("event") for e in read_jsonl(hook_log) if e.get("event")})
+    r.data["hook_events"] = events
+    r.check("hooks run inside the sandbox", "SessionStart" in events and "Stop" in events, f"got {events}")
+    return r.finish()
+
+
+def t_cc_sandbox_inside(ctx, r):
+    abi = landlock_abi()
+    if not abi or abi < 1 or platform.machine() not in SECCOMP_ARCH:
+        return r.skip("Landlock or the seccomp filter unavailable")
+    repo = ctx.repo("cc-sandbox-inside")
+    caches = ctx.work / "cc-sandbox-inside-caches"
+    caches.mkdir(exist_ok=True)
+    settings = {"sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True}}
+    cmd = [ctx.claude, "-p", "--output-format", "stream-json", "--verbose", "--model", ctx.model,
+           "--settings", json.dumps(settings), "--permission-prompts", "none", "--tools", "Bash"]
+    prompt = "Use the Bash tool to run `touch inside.txt`. Then reply with one word: done."
+    rc, out, err, _ = run(landlock_wrap(_sandbox_rw(ctx, repo, caches), cmd, seccomp=True),
+                          env=_sandbox_env(ctx, caches), cwd=repo, timeout=ctx.args.timeout, stdin_data=prompt)
+    (ctx.out / "cc-sandbox-inside-stream.jsonl").write_text(out)
+    msgs = []
+    for line in out.splitlines():
+        try:
+            msgs.append(json.loads(line))
+        except ValueError:
+            pass
+    ran = (repo / "inside.txt").exists()
+    r.data.update({"rc": rc, "bash_ran": ran, "tool_results": tool_results(msgs), "stderr": tail(err, 400)})
+    r.status = "INFO"
+    return r.finish("Bash ran without Claude Code's sandbox" if ran
+                    else "Bash did not run: Claude Code's sandbox can't start, and Bash then needs approval")
+
+
 def t_remote_control(ctx, r):
     repo = ctx.repo("remote-control")
     argv = [ctx.claude, "--remote-control", "cy-spike", "--model", ctx.model, "--permission-mode", ctx.manual_mode]
@@ -1472,8 +1630,8 @@ TESTS = [
     ("first_run", t_first_run, False, False, "a new config dir shows the theme picker, hasCompletedOnboarding skips it"),
     ("model_probe", t_model_probe, True, False, "one tiny call; gates the other model tests (retries an OAuth refresh clash once)"),
     ("landlock", t_landlock, False, False, "Landlock ABI and real enforcement in a child process"),
-    ("seccomp", t_seccomp, False, False, "seccomp available"),
-    ("bwrap", t_bwrap, False, False, "bubblewrap + socat for the native CC sandbox, user namespaces"),
+    ("seccomp", t_seccomp, False, False, "seccomp available, and Cloneyard's filter on Unix sockets enforced"),
+    ("bwrap", t_bwrap, False, False, "bubblewrap + socat for the native CC sandbox, user namespaces, bwrap inside Landlock"),
     ("headless", t_headless, True, False,
      "stream-json multi-turn on one process, --session-id, --append-system-prompt-file, plugin + --settings hooks, "
      "--permission-prompts none, rate_limit_event, local OTLP/HTTP JSON receiver, the end on stdin EOF"),
@@ -1482,6 +1640,9 @@ TESTS = [
     ("osc7501", t_osc7501, True, False, "interactive session in a PTY: OSC 7501 probe, idle/working/done/blocked, clear"),
     ("background", t_background, True, False, "claude --bg, agents --json, logs, stop, rm; hooks and OTel env in bg"),
     ("landlock_claude", t_landlock_claude, True, False, "claude -p under Landlock with a narrow writable list"),
+    ("sandbox_claude", t_sandbox_claude, True, False, "claude -p and its hooks under Landlock and seccomp with a clone's write list"),
+    ("cc_sandbox_inside", t_cc_sandbox_inside, True, False,
+     "native CC sandbox inside Landlock and seccomp: what Bash does when bwrap can't start"),
     ("remote_control", t_remote_control, True, True, "--remote-control prints a claude.ai/code URL (opt-in: --with-rc)"),
     ("accounts", t_accounts, True, True, "two CLAUDE_CONFIG_DIR accounts in parallel (opt-in: --accounts A,B)"),
 ]

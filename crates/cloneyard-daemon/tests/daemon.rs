@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use cloneyard_api::rpc::Discover;
 use cloneyard_api::system::{Ping, PingResult, Version};
-use cloneyard_daemon::{Daemon, paths};
+use cloneyard_daemon::{Daemon, Sandboxing, paths};
 use cloneyard_rpc::Client;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -40,7 +40,9 @@ struct Running {
 }
 
 async fn start(dirs: &Dirs) -> Running {
-    let daemon = Daemon::bind(&dirs.runtime, &dirs.data).await.unwrap();
+    let daemon = Daemon::bind(&dirs.runtime, &dirs.data, Sandboxing::On)
+        .await
+        .unwrap();
     let socket = daemon.socket().to_owned();
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(daemon.serve(async {
@@ -181,7 +183,7 @@ async fn refuses_a_second_daemon_on_the_same_data_dir() {
     let first = start(&dirs).await;
     let other_runtime = dirs.temp.path().join("other").join("cloneyard");
 
-    let Err(error) = Daemon::bind(&other_runtime, &dirs.data).await else {
+    let Err(error) = Daemon::bind(&other_runtime, &dirs.data, Sandboxing::On).await else {
         panic!("a second daemon opened the same data dir");
     };
 
@@ -198,7 +200,7 @@ async fn refuses_a_second_instance() {
     let dirs = Dirs::new();
     let first = start(&dirs).await;
 
-    let Err(error) = Daemon::bind(&dirs.runtime, &dirs.data).await else {
+    let Err(error) = Daemon::bind(&dirs.runtime, &dirs.data, Sandboxing::On).await else {
         panic!("a second daemon started");
     };
 

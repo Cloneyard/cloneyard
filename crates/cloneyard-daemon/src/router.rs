@@ -93,11 +93,12 @@ pub(crate) mod tests {
 
     use super::router;
     use crate::node::Node;
+    use crate::sandbox::Sandboxing;
 
     pub(crate) type TestClient = Client<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 
     pub(crate) async fn open_node(dir: &TempDir) -> Arc<Node> {
-        Arc::new(Node::open(dir.path()).await.unwrap())
+        Arc::new(Node::open(dir.path(), Sandboxing::On).await.unwrap())
     }
 
     pub(crate) fn connect(node: Arc<Node>) -> TestClient {

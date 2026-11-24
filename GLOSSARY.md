@@ -55,3 +55,7 @@ _Avoid_: worktree, working copy, clone
 **Headless**:
 The mode of a clone that runs from a prompt without a terminal and reports its state through its output; the other mode is interactive.
 _Avoid_: background, batch, job
+
+**Sandbox**:
+The boundary a clone runs in, which limits what it reads, writes and reaches on its node; a clone outside it is unsandboxed.
+_Avoid_: jail, container, isolation

@@ -1,0 +1,71 @@
+---
+title: Sandbox
+description: What a clone can read, write and reach in Cloneyard's sandbox of Landlock and seccomp, and how to run clones without it.
+---
+
+The daemon starts every clone in a sandbox: Landlock limits its files and a seccomp filter its sockets. What the clone starts stays inside, and the daemon stays outside.
+
+## What a clone reads
+
+Everything except:
+
+- the keys, tokens and logins in your home, such as `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh`, `~/.claude`, `~/.claude.json`, keyrings, browser profiles and the credential files of cargo, npm, PyPI and Composer
+- the data directory, apart from the clone's own directory and its account's
+- every account's directory and every repo on the node, apart from the objects of its own repo, which its checkout reads
+
+Reading your repo's `.env` fails with `Permission denied`. A clone can still list the names of files in a hidden directory, but not open them.
+
+## What a clone writes
+
+- its own directory, `clones/<id>` in the data directory, checkout included
+- its account's directory
+- `caches` in the data directory, where `XDG_CACHE_HOME`, `CARGO_HOME`, `npm_config_cache` and `GOMODCACHE` point
+- `/tmp` and `/dev`
+
+A clone writes nothing that a process outside the sandbox later runs, so it gets caches of its own instead of your `~/.cargo` and `~/.cache`.
+
+`git fetch` and `git push` to `origin` fail in a checkout, since the repo is hidden apart from its objects.
+
+<Aside type="caution">
+A repo inside `/tmp` can't be hidden from a clone, so a clone of it ends `error` with `cannot hide <repo> inside /tmp, which the clone can read`.
+</Aside>
+
+## What a clone reaches
+
+- No Unix stream or seqpacket socket: creating one fails with `EACCES`, so a clone reaches neither Docker, systemd, tmux, D-Bus, an SSH agent nor the daemon. Datagram sockets and socket pairs work.
+- No io_uring, which fails with `EPERM`, since it opens sockets without the syscall.
+- TCP and UDP, localhost included.
+- Signals to your other processes, on a kernel older than 6.12; a newer Landlock keeps a clone's signals inside its sandbox.
+
+## What a clone still sees
+
+- its account's Claude Code login, which Claude Code needs
+- the daemon's environment, except `ANTHROPIC_*` and `CLAUDE*`
+- the files other processes keep in `/tmp`
+
+Claude Code's own sandbox is off in clones, since its `bwrap` needs to mount, which Landlock forbids. A clone runs `claude` with `--settings '{"sandbox":{"enabled":false}}'` and `DISABLE_AUTOUPDATER=1`.
+
+<Aside type="caution">
+Don't run `claude` on an account's directory yourself: its clones write there, and Claude Code would run the hooks and settings they left.
+</Aside>
+
+## Without Landlock
+
+The sandbox needs Linux 5.13 or newer with Landlock enabled at boot. Without it, `cy clone run` refuses:
+
+```text frame="terminal" title="cy clone run --project cloneyard --account personal"
+error: this kernel has no Landlock, so clones can't run in the sandbox; set unsandboxed = true in /home/you/.config/cloneyard/node.toml to run them without it
+```
+
+To run clones without the sandbox, on any kernel, set it and restart the daemon:
+
+```toml title="~/.config/cloneyard/node.toml"
+unsandboxed = true
+```
+
+`cy clones` marks each clone that runs without the sandbox, like those that started before Cloneyard had one:
+
+```text frame="terminal" title="cy clones"
+CT-0001  cloneyard  personal  headless  done     unsandboxed
+CT-0002  cloneyard  personal  headless  working
+```

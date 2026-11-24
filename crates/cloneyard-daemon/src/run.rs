@@ -7,7 +7,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::parse_filter;
-use crate::{Config, Daemon, Log, paths};
+use crate::{Config, Daemon, Log, Sandboxing, paths};
 
 /// Runs the daemon in the foreground until SIGTERM or SIGINT.
 ///
@@ -15,15 +15,28 @@ use crate::{Config, Daemon, Log, paths};
 ///
 /// When the settings are invalid or the daemon can't start, for example because another one runs.
 pub fn run() -> anyhow::Result<()> {
-    let config = Config::load(&paths::config_file()?)?;
+    let config_file = paths::config_file()?;
+    let config = Config::load(&config_file)?;
     init_logging(&config.log)?;
+    let sandboxing = Sandboxing::new(config.unsandboxed, &config_file);
+    match &sandboxing {
+        Sandboxing::On => {}
+        Sandboxing::Off => tracing::warn!(
+            "clones run without the sandbox, as {} says unsandboxed = true",
+            config_file.display()
+        ),
+        Sandboxing::Unavailable { .. } => tracing::warn!(
+            "this kernel has no Landlock, so clones won't start unless {} says unsandboxed = true",
+            config_file.display()
+        ),
+    }
     let runtime_dir = paths::runtime_dir()?;
     let data_dir = paths::data_dir()?;
     tokio::runtime::Runtime::new()
         .context("cannot start the tokio runtime")?
         .block_on(async {
             let shutdown = shutdown_signal()?;
-            let daemon = Daemon::bind(&runtime_dir, &data_dir).await?;
+            let daemon = Daemon::bind(&runtime_dir, &data_dir, sandboxing).await?;
             daemon.serve(shutdown).await
         })
 }

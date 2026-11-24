@@ -1,6 +1,8 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use cloneyard_api::clone::Handle;
 
@@ -51,6 +53,15 @@ enum Command {
     Rpc {
         #[command(subcommand)]
         command: RpcCommand,
+    },
+    /// Enter a clone's sandbox and run a program in it, as the daemon does for every clone
+    #[command(hide = true)]
+    Sandbox {
+        /// What the clone may read and write, in JSON
+        policy: String,
+        /// The program and its arguments
+        #[arg(last = true, required = true)]
+        command: Vec<OsString>,
     },
 }
 
@@ -136,6 +147,7 @@ pub fn run() -> ExitCode {
         Command::Rpc {
             command: RpcCommand::Schema,
         } => rpc::schema(),
+        Command::Sandbox { policy, command } => sandbox(&policy, &command),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -144,6 +156,13 @@ pub fn run() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn sandbox(policy: &str, command: &[OsString]) -> anyhow::Result<()> {
+    let (program, args) = command
+        .split_first()
+        .context("no program to run in the sandbox")?;
+    Err(cloneyard_sandbox::enter(policy, program, args).into())
 }
 
 #[cfg(test)]

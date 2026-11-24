@@ -269,6 +269,11 @@ fn lists_the_errors_of_the_clone_methods_with_their_codes_and_fields() {
         [
             (json!(1200), json!("No such project"), json!(["name"])),
             (json!(1201), json!("No such account"), json!(["name"])),
+            (
+                json!(1204),
+                json!("No sandbox for clones on this node"),
+                json!(["config"])
+            ),
         ]
     );
     assert_eq!(

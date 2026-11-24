@@ -5,18 +5,20 @@ use ulid::Ulid;
 
 use crate::paths;
 use crate::process::Processes;
+use crate::sandbox::Sandboxing;
 
-/// The state of the node that the handlers share: its id, its database, its data dir and the processes of its clones.
+/// The state of the node that the handlers share: its id, its database, its data dir, how it sandboxes its clones and their processes.
 pub(crate) struct Node {
     pub(crate) id: Ulid,
     pub(crate) store: Store,
     pub(crate) data_dir: PathBuf,
+    pub(crate) sandboxing: Sandboxing,
     pub(crate) processes: Processes,
 }
 
 impl Node {
     /// Opens the database in `data_dir` and reads the node id from it, creating both if they are missing, and marks the clones that were working as lost.
-    pub(crate) async fn open(data_dir: &Path) -> anyhow::Result<Self> {
+    pub(crate) async fn open(data_dir: &Path, sandboxing: Sandboxing) -> anyhow::Result<Self> {
         let store = Store::open(&paths::database(data_dir)).await?;
         let id = store.node_id().await?;
         let lost = store
@@ -33,6 +35,7 @@ impl Node {
             id,
             store,
             data_dir: data_dir.to_owned(),
+            sandboxing,
             processes: Processes::default(),
         })
     }

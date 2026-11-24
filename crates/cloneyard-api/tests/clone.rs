@@ -70,6 +70,10 @@ fn each_clone_error_has_its_own_code_and_its_fields_as_data() {
             name: "personal".to_owned(),
         }
         .encode(),
+        RunError::NoSandbox {
+            config: "/home/me/.config/cloneyard/node.toml".to_owned(),
+        }
+        .encode(),
         StopError::UnknownClone { handle }.encode(),
         StopError::NotRunning {
             handle,
@@ -89,6 +93,10 @@ fn each_clone_error_has_its_own_code_and_its_fields_as_data() {
         [
             (1200, json!({"name": "app"})),
             (1201, json!({"name": "personal"})),
+            (
+                1204,
+                json!({"config": "/home/me/.config/cloneyard/node.toml"})
+            ),
             (1202, json!({"handle": "CT-0001"})),
             (1203, json!({"handle": "CT-0001", "state": "done"})),
         ]
@@ -96,7 +104,7 @@ fn each_clone_error_has_its_own_code_and_its_fields_as_data() {
 }
 
 #[test]
-fn the_clone_errors_name_the_project_account_or_clone() {
+fn the_clone_errors_name_the_project_account_clone_or_settings() {
     let handle = Handle::new(7);
     let messages = [
         RunError::UnknownProject {
@@ -105,6 +113,10 @@ fn the_clone_errors_name_the_project_account_or_clone() {
         .to_string(),
         RunError::UnknownAccount {
             name: "personal".to_owned(),
+        }
+        .to_string(),
+        RunError::NoSandbox {
+            config: "/home/me/.config/cloneyard/node.toml".to_owned(),
         }
         .to_string(),
         StopError::UnknownClone { handle }.to_string(),
@@ -120,6 +132,8 @@ fn the_clone_errors_name_the_project_account_or_clone() {
         [
             "no project app",
             "no account personal",
+            "this kernel has no Landlock, so clones can't run in the sandbox; \
+             set unsandboxed = true in /home/me/.config/cloneyard/node.toml to run them without it",
             "no clone CT-0007",
             "clone CT-0007 is stopped, not running",
         ]
@@ -140,6 +154,7 @@ fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
         reason: None,
         branch: "cloneyard/ct-0001".to_owned(),
         checkout: "/data/clones/x/checkout".to_owned(),
+        unsandboxed: false,
         sessions: vec![Session {
             id: session,
             provider_id: "2f6c".to_owned(),
@@ -160,6 +175,7 @@ fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
             "reason": null,
             "branch": "cloneyard/ct-0001",
             "checkout": "/data/clones/x/checkout",
+            "unsandboxed": false,
             "sessions": [{"id": session.to_string(), "provider_id": "2f6c"}]
         })
     );

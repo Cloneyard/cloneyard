@@ -11,6 +11,8 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// Runs clones without the sandbox, also on a kernel without Landlock, where they don't start otherwise.
+    pub unsandboxed: bool,
     pub log: Log,
 }
 
@@ -110,6 +112,12 @@ mod tests {
                 level: "warn,cloneyard_rpc=debug".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn reads_unsandboxed_and_leaves_it_off_by_default() {
+        assert!(load("unsandboxed = true\n").unwrap().unsandboxed);
+        assert!(!Config::default().unsandboxed);
     }
 
     #[test]

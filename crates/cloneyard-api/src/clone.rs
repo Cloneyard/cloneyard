@@ -35,11 +35,17 @@ pub enum RunError {
     UnknownProject { name: String },
     #[error("no account {name}")]
     UnknownAccount { name: String },
+    /// The kernel has no Landlock, and the node's settings in `config` don't say `unsandboxed = true`.
+    #[error(
+        "this kernel has no Landlock, so clones can't run in the sandbox; \
+         set unsandboxed = true in {config} to run them without it"
+    )]
+    NoSandbox { config: String },
 }
 
 impl MethodError for RunError {
     // clone.* has the codes 1200 to 1299.
-    const ERRORS: &'static [ErrorCode] = &[UNKNOWN_PROJECT, UNKNOWN_ACCOUNT];
+    const ERRORS: &'static [ErrorCode] = &[UNKNOWN_PROJECT, UNKNOWN_ACCOUNT, NO_SANDBOX];
 }
 
 const UNKNOWN_PROJECT: ErrorCode = ErrorCode {
@@ -64,6 +70,12 @@ const NOT_RUNNING: ErrorCode = ErrorCode {
     variant: "NotRunning",
     code: 1203,
     message: "Clone is not running",
+};
+
+const NO_SANDBOX: ErrorCode = ErrorCode {
+    variant: "NoSandbox",
+    code: 1204,
+    message: "No sandbox for clones on this node",
 };
 
 pub struct List;
@@ -149,6 +161,8 @@ pub struct Clone {
     pub branch: String,
     /// The path of the checkout on this node.
     pub checkout: String,
+    /// Whether the clone runs without the sandbox: when the node's settings say `unsandboxed = true`, and for every clone started before the sandbox existed.
+    pub unsandboxed: bool,
     /// In the order they started.
     pub sessions: Vec<Session>,
 }
