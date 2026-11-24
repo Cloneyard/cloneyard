@@ -14,5 +14,5 @@ A clone works in a checkout of its own, `clones/<id>/checkout` in the data dir: 
 
 - Uncommitted changes in your working tree don't reach the clone.
 - `git gc` in the repo can prune objects a checkout still needs once the branch it started from is rewritten or deleted and they are older than `gc.pruneExpire`; git in the checkout then fails on the missing objects.
-- `origin` in the checkout is the repo, so the agent can fetch from it. The sandbox stops a push into it; until there is one, Claude Code's default permission mode does, as it denies the command.
+- `origin` in the checkout is the repo, which the sandbox of [ADR 0012](0012-clone-sandbox-of-landlock-and-seccomp.md) hides apart from its objects, so neither a fetch from it nor a push into it works.
 - Each clone keeps its directory, checkout included, until removing a clone exists.
