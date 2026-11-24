@@ -12,6 +12,7 @@ use tokio::net::UnixListener;
 use tokio::task::JoinSet;
 
 use crate::node::Node;
+use crate::sandbox::Sandboxing;
 use crate::{paths, process, router};
 
 /// A daemon that holds the single-instance locks, has the node's database open and listens on its socket.
@@ -24,12 +25,16 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Takes the locks in `runtime_dir` and `data_dir`, opens the database and listens on the socket; call it inside a tokio runtime.
+    /// Takes the locks in `runtime_dir` and `data_dir`, opens the database and listens on the socket, to start clones as `sandboxing` says; call it inside a tokio runtime.
     ///
     /// # Errors
     ///
     /// When another daemon holds a lock, or a directory, a lock, the database or the socket can't be set up.
-    pub async fn bind(runtime_dir: &Path, data_dir: &Path) -> anyhow::Result<Self> {
+    pub async fn bind(
+        runtime_dir: &Path,
+        data_dir: &Path,
+        sandboxing: Sandboxing,
+    ) -> anyhow::Result<Self> {
         create_private_dir(runtime_dir)?;
         let socket = paths::socket(runtime_dir);
         let Some(runtime_lock) = try_lock(&paths::lock(runtime_dir))? else {
@@ -40,7 +45,7 @@ impl Daemon {
         let Some(data_lock) = try_lock(&paths::data_lock(data_dir))? else {
             bail!("another cloneyard daemon is using {}", data_dir.display());
         };
-        let node = Node::open(data_dir).await?;
+        let node = Node::open(data_dir, sandboxing).await?;
 
         // Only the lock holder gets here, so a socket left on disk is stale.
         match fs::remove_file(&socket) {

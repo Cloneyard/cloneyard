@@ -188,6 +188,7 @@ dependencies = [
  "cloneyard-api",
  "cloneyard-provider-claude",
  "cloneyard-rpc",
+ "cloneyard-sandbox",
  "cloneyard-store",
  "rustix",
  "serde",

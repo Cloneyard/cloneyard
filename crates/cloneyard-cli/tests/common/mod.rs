@@ -20,7 +20,8 @@ pub struct Node {
 impl Node {
     pub fn new() -> Self {
         Self {
-            home: TempDir::new().unwrap(),
+            // A clone writes in /tmp, so a repo there couldn't be hidden from it.
+            home: TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap(),
         }
     }
 
@@ -34,7 +35,9 @@ impl Node {
             .env("XDG_DATA_HOME", home.join("data"))
             .env("XDG_STATE_HOME", home.join("state"))
             .env("XDG_CACHE_HOME", home.join("cache"))
-            .env("XDG_RUNTIME_DIR", home);
+            .env("XDG_RUNTIME_DIR", home)
+            // The home is in this repo's target dir, and git would find this repo above it.
+            .env("GIT_CEILING_DIRECTORIES", env!("CARGO_TARGET_TMPDIR"));
         if let Some(path) = env::var_os("PATH") {
             cy.env("PATH", path);
         }

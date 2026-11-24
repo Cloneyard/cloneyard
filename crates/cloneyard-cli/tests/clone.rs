@@ -11,8 +11,8 @@ use common::{
 
 mod common;
 
-/// Records what `claude` got in `$HOME/clones/<session id>/`, then starts its session.
-const RECORD: &str = r#"out="$HOME/clones/$session"
+/// Records what `claude` got in `clones/<session id>/` in its account's directory, which it can write, then starts its session.
+const RECORD: &str = r#"out="$CLAUDE_CONFIG_DIR/clones/$session"
 mkdir -p "$out"
 printf '%s\n' "$@" > "$out/args"
 printf '%s' "$CLAUDE_CONFIG_DIR" > "$out/config-dir"
@@ -127,7 +127,10 @@ fn wait_for_state(node: &Node, line: &str) {
 }
 
 fn recorded(node: &Node, session: &str, name: &str) -> String {
-    let path = node.home.path().join("clones").join(session).join(name);
+    let path = claude_dir(node, "personal")
+        .join("clones")
+        .join(session)
+        .join(name);
     wait_until(&format!("{}", path.display()), || path.exists());
     fs::read_to_string(path).unwrap()
 }
@@ -179,7 +182,8 @@ fn the_clone_runs_claude_headless_on_its_session_and_account_in_its_checkout() {
         recorded(&node, &session, "args"),
         format!(
             "-p\n--input-format\nstream-json\n--output-format\nstream-json\n--verbose\n\
-             --session-id\n{session}\n--permission-prompts\nnone\n"
+             --session-id\n{session}\n--permission-prompts\nnone\n\
+             --settings\n{{\"sandbox\":{{\"enabled\":false}}}}\n"
         )
     );
     assert_eq!(
@@ -415,4 +419,104 @@ fn clone_run_prints_the_handle_and_fails_with_the_reason_when_claude_does_not_st
          No such file or directory (os error 2)\n"
     );
     assert_eq!(clones(&node), "CT-0001  app  personal  headless  error\n");
+}
+
+#[test]
+fn a_clone_cannot_read_the_repos_env_or_an_ssh_key_but_runs_a_build_and_commits_in_its_checkout() {
+    let (node, repo, _daemon) = node_with_project_and_account();
+    fs::write(repo.join(".env"), "TOKEN=secret\n").unwrap();
+    let ssh = node.home.path().join(".ssh");
+    fs::create_dir(&ssh).unwrap();
+    fs::write(ssh.join("id_ed25519"), "key\n").unwrap();
+    fake_headless(
+        &node,
+        &format!(
+            r#"{RECORD}
+repo=$(dirname "$(dirname "$(cat .git/objects/info/alternates)")")
+cat "$repo/.env" > "$out/env" 2> "$out/env-error"
+cat "$HOME/.ssh/id_ed25519" > "$out/key" 2> "$out/key-error"
+echo 'echo built > built.txt' > build.sh
+sh build.sh
+git add build.sh built.txt
+git -c user.name=Clone -c user.email=clone@example.com commit --quiet -m build
+git log -1 --format=%s > "$out/commit"
+{DONE}"#
+        ),
+    );
+
+    stdout_of_success(&run(&node, "Print the secrets"));
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+
+    let session = field(&show(&node, "CT-0001"), "session");
+    assert_eq!(recorded(&node, &session, "commit"), "build\n");
+    for (read, error) in [("env", "env-error"), ("key", "key-error")] {
+        assert_eq!(recorded(&node, &session, read), "");
+        let error = recorded(&node, &session, error);
+        assert!(error.contains("Permission denied"), "{error}");
+    }
+}
+
+#[test]
+fn a_clone_cannot_write_outside_its_directory_reach_the_daemon_socket_or_push_to_the_repo() {
+    let node = Node::new();
+    fake_claude(&node, LOG_IN);
+    let repo = repo_with_commit(&node.home.path().join("app"));
+    let mut daemon = node.cy("daemon");
+    daemon
+        .env("PATH", bin_path(&node))
+        .env("CY", env!("CARGO_BIN_EXE_cy"));
+    let _daemon = node.spawn(daemon);
+    stdout_of_success(&project_add(&node, &repo));
+    stdout_of_success(&account_add(&node, "personal").output().unwrap());
+    let refs = git(&repo, &["for-each-ref"]);
+    fake_headless(
+        &node,
+        &format!(
+            r#"{RECORD}
+{{ echo outside > "$HOME/outside"; }} 2> "$out/write-error"
+"$CY" ping 2> "$out/ping-error"
+git push --quiet origin HEAD:refs/heads/from-clone 2> "$out/push-error"
+echo $? > "$out/push"
+{DONE}"#
+        ),
+    );
+
+    stdout_of_success(&run(&node, "Break out"));
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+
+    let session = field(&show(&node, "CT-0001"), "session");
+    let ping = recorded(&node, &session, "ping-error");
+    assert_ne!(recorded(&node, &session, "push"), "0\n");
+    assert!(!node.home.path().join("outside").exists());
+    assert!(
+        recorded(&node, &session, "write-error").contains("Permission denied"),
+        "{}",
+        recorded(&node, &session, "write-error")
+    );
+    assert!(ping.contains("Permission denied"), "{ping}");
+    assert_eq!(git(&repo, &["for-each-ref"]), refs);
+}
+
+#[test]
+fn a_clone_of_a_repo_in_tmp_does_not_start_since_tmp_is_writable_and_names_what_it_cannot_hide() {
+    let node = Node {
+        home: tempfile::TempDir::new_in("/tmp").unwrap(),
+    };
+    fake_claude(&node, LOG_IN);
+    let home = fs::canonicalize(node.home.path()).unwrap();
+    let repo = repo_with_commit(&home.join("app"));
+    let _daemon = start_daemon(&node);
+    stdout_of_success(&project_add(&node, &repo));
+    stdout_of_success(&account_add(&node, "personal").output().unwrap());
+
+    let output = run(&node, "Say pong");
+
+    assert_eq!(
+        stderr_of_failure(&output),
+        format!(
+            "error: clone CT-0001 did not start: cannot sandbox the clone: \
+             cannot hide {}/.ssh inside /tmp, which the clone can read\n",
+            home.display()
+        )
+    );
 }

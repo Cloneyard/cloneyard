@@ -1,3 +1,4 @@
+use std::env;
 use std::ffi::OsStr;
 use std::fs::DirBuilder;
 use std::os::unix::fs::DirBuilderExt as _;
@@ -17,6 +18,7 @@ use uuid::Uuid;
 
 use crate::node::Node;
 use crate::process::{self, GRACE};
+use crate::sandbox::{self, Sandboxing};
 
 /// Records a `working` clone, makes its checkout and starts it; a clone whose checkout or start fails ends `error`, with the reason.
 pub(crate) async fn run(
@@ -46,6 +48,11 @@ pub(crate) async fn run(
     else {
         return Ok(Err(RunError::UnknownAccount { name: account }));
     };
+    if let Sandboxing::Unavailable { config_file } = &node.sandboxing {
+        return Ok(Err(RunError::NoSandbox {
+            config: config_file.display().to_string(),
+        }));
+    }
     let repo = project
         .repos
         .first()
@@ -77,7 +84,7 @@ pub(crate) async fn run(
                 mode: Mode::Headless,
                 checkout,
                 session: session_id.to_string(),
-                unsandboxed: true,
+                unsandboxed: node.sandboxing == Sandboxing::Off,
             },
             |handle| format!("cloneyard/{}", handle.to_string().to_lowercase()),
         )
@@ -119,8 +126,24 @@ async fn start(
     make_checkout(repo, checkout, &clone.branch)
         .await
         .map_err(|error| format!("cannot create the checkout: {error:#}"))?;
-    let child = headless::command(account_dir, session_id)
-        .current_dir(checkout)
+    let mut claude = headless::command(account_dir, session_id);
+    claude.current_dir(checkout);
+    let mut command = if clone.unsandboxed {
+        claude
+    } else {
+        let clone_dir = checkout
+            .parent()
+            .ok_or_else(|| format!("{} has no parent", checkout.display()))?;
+        let policy = sandbox::policy(node, env::home_dir().as_deref(), clone_dir, account_dir)
+            .await
+            .map_err(|error| format!("cannot sandbox the clone: {error:#}"))?;
+        headless::inside_sandbox(&mut claude);
+        sandbox::use_caches(&mut claude, &node.data_dir);
+        cloneyard_sandbox::command(Path::new(sandbox::ENTER), &policy, claude.as_std())
+            .map(Command::from)
+            .map_err(|error| format!("cannot start claude: {error}"))?
+    };
+    let child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -246,6 +269,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::Arc;
 
     use cloneyard_api::account::Provider;
     use cloneyard_api::clone::{
@@ -260,6 +284,7 @@ mod tests {
     use super::make_checkout;
     use crate::node::Node;
     use crate::router::tests::{connect, open_node};
+    use crate::sandbox::Sandboxing;
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
@@ -359,6 +384,44 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn run_refuses_on_a_kernel_without_landlock_and_records_no_clone() {
+        let dir = TempDir::new().unwrap();
+        let node = Arc::new(
+            Node::open(
+                dir.path(),
+                Sandboxing::Unavailable {
+                    config_file: PathBuf::from("/home/me/.config/cloneyard/node.toml"),
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        node.store
+            .add_project(node.id, "app", "app", "/code/app")
+            .await
+            .unwrap()
+            .unwrap();
+        node.store
+            .add_account(node.id, "personal", Provider::ClaudeCode, "/data/personal")
+            .await
+            .unwrap()
+            .unwrap();
+        let mut client = connect(Arc::clone(&node));
+
+        let result = client.request::<Run>(params("app", "personal")).await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(ClientError::Method(RunError::NoSandbox { config }))
+                    if config == "/home/me/.config/cloneyard/node.toml"
+            ),
+            "{result:?}"
+        );
+        assert_eq!(node.store.clones(node.id).await.unwrap(), []);
     }
 
     #[tokio::test]

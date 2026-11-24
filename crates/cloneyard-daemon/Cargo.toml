@@ -11,6 +11,7 @@ anyhow.workspace = true
 cloneyard-api.workspace = true
 cloneyard-provider-claude.workspace = true
 cloneyard-rpc.workspace = true
+cloneyard-sandbox.workspace = true
 cloneyard-store.workspace = true
 rustix = { version = "1.1.6", features = ["process"] }
 serde.workspace = true
