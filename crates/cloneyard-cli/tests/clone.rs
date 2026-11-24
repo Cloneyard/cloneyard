@@ -217,11 +217,13 @@ fn clone_show_lists_the_clone_with_its_checkout_and_session() {
     assert_eq!(
         keys,
         [
-            "handle", "id", "project", "account", "mode", "state", "branch", "checkout", "session"
+            "handle", "id", "project", "account", "mode", "state", "sandbox", "branch", "checkout",
+            "session"
         ]
     );
     assert_eq!(field(&shown, "handle"), "CT-0001");
     assert_eq!(field(&shown, "state"), "done");
+    assert_eq!(field(&shown, "sandbox"), "on");
     assert_eq!(
         checkout,
         fs::canonicalize(node.home.path().join("data/cloneyard/clones"))
@@ -495,6 +497,29 @@ echo $? > "$out/push"
     );
     assert!(ping.contains("Permission denied"), "{ping}");
     assert_eq!(git(&repo, &["for-each-ref"]), refs);
+}
+
+#[test]
+fn with_unsandboxed_in_node_toml_a_clone_runs_without_the_sandbox_and_clones_says_so() {
+    let node = Node::new();
+    fake_claude(&node, LOG_IN);
+    let config = node.home.path().join("config/cloneyard");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(config.join("node.toml"), "unsandboxed = true\n").unwrap();
+    let repo = repo_with_commit(&node.home.path().join("app"));
+    let _daemon = start_daemon(&node);
+    stdout_of_success(&project_add(&node, &repo));
+    stdout_of_success(&account_add(&node, "personal").output().unwrap());
+    fake_headless(
+        &node,
+        &format!("{RECORD}\necho outside > \"$HOME/outside\"\n{DONE}"),
+    );
+
+    stdout_of_success(&run(&node, "Say pong"));
+
+    wait_for_state(&node, "CT-0001  app  personal  headless  done  unsandboxed");
+    assert!(node.home.path().join("outside").exists());
+    assert_eq!(field(&show(&node, "CT-0001"), "sandbox"), "off");
 }
 
 #[test]

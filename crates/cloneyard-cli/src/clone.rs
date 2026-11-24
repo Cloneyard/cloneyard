@@ -46,10 +46,16 @@ pub(crate) fn list() -> anyhow::Result<()> {
     let project = width(|clone| clone.project.clone());
     let account = width(|clone| clone.account.clone());
     let mode = width(|clone| clone.mode.to_string());
+    let state = width(|clone| clone.state.to_string());
     for clone in &clones {
+        let state = if clone.unsandboxed {
+            format!("{:state$}  unsandboxed", clone.state.to_string())
+        } else {
+            clone.state.to_string()
+        };
         println!(
-            "{:handle$}  {:project$}  {:account$}  {:mode$}  {}",
-            clone.handle, clone.project, clone.account, clone.mode, clone.state
+            "{:handle$}  {:project$}  {:account$}  {:mode$}  {state}",
+            clone.handle, clone.project, clone.account, clone.mode
         );
     }
     Ok(())
@@ -68,6 +74,10 @@ pub(crate) fn show(handle: Handle) -> anyhow::Result<()> {
         ("state", clone.state.to_string()),
     ];
     lines.extend(clone.reason.map(|reason| ("reason", reason)));
+    lines.push((
+        "sandbox",
+        if clone.unsandboxed { "off" } else { "on" }.to_owned(),
+    ));
     lines.push(("branch", clone.branch));
     lines.push(("checkout", clone.checkout));
     lines.extend(
