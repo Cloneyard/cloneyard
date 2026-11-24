@@ -11,7 +11,7 @@ A SQLite database on a thread of its own: the node's `cloneyard.db`, and any oth
 - The node id, created the first time it is asked for.
 - Projects with their repos and the repos' paths on a node; a new project, its repo and its path go in one transaction.
 - Accounts with their directories on a node; a new account and its directory go in one transaction.
-- Clones with their sessions: a new clone gets the node's next handle from a counter in `meta`, which never gives a number twice, and goes in one transaction with its first session; `lose_clones` sets the clones still `working` to `error`.
+- Clones with their sessions and whether they run without the sandbox, which migration `0006` sets for the clones before it: a new clone gets the node's next handle from a counter in `meta`, which never gives a number twice, and goes in one transaction with its first session; `lose_clones` sets the clones still `working` to `error`.
 - One write path for entity tables, which adds a `change_log` row for each entity a transaction changes, with the node id and an HLC timestamp that never goes back; an update logs the key and the fields it set.
 
 ## Out of scope

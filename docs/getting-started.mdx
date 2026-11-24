@@ -8,6 +8,7 @@ description: Build Cloneyard from source, start its daemon, add a git repo as a 
 - [rustup](https://rustup.rs): the first build installs the toolchain pinned in `rust-toolchain.toml`.
 - `git` on the daemon's `PATH`, which finds the top level of a repo you add and makes the checkouts of clones.
 - Claude Code on the `PATH` of the terminal where you add an account, and on the daemon's, which runs clones.
+- Linux 5.13 or newer with Landlock, which the [sandbox](/cloneyard/sandbox) of clones needs.
 - `XDG_RUNTIME_DIR` set to an absolute path, as a systemd login session does.
 
 <Aside type="caution">
@@ -107,9 +108,7 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
 
    The clone is a headless `claude -p` in a checkout of its own: a `git clone --shared` of the repo's last commit on branch `cloneyard/ct-0001`, which never writes to the repo. Your uncommitted changes stay out of it. Claude Code keeps the clone's answer in its transcript in the account's directory.
 
-   <Aside type="caution">
-   Clones have no sandbox yet, so a clone runs as your user. Claude Code's default permission mode denies its edits and commands, unless the repo's own `.claude/settings.json` allows them.
-   </Aside>
+   The clone runs in a [sandbox](/cloneyard/sandbox): it can't read your `.env`, your SSH keys or the repo itself, and it writes only in its own directory. Claude Code's default permission mode also denies its edits and commands, unless the repo's own `.claude/settings.json` allows them.
 
 9. List the clones:
 
@@ -136,6 +135,7 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
     account   personal
     mode      headless
     state     done
+    sandbox   on
     branch    cloneyard/ct-0001
     checkout  /home/you/.local/share/cloneyard/clones/01M8F3K2Q9V7T4R6N5X1C0B8ZD/checkout
     session   5f0c8d2e-7b1a-4c3e-9d6f-2a8b4e1c7d90
