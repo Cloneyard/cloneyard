@@ -77,6 +77,7 @@ pub(crate) async fn run(
                 mode: Mode::Headless,
                 checkout,
                 session: session_id.to_string(),
+                unsandboxed: true,
             },
             |handle| format!("cloneyard/{}", handle.to_string().to_lowercase()),
         )
@@ -307,6 +308,7 @@ mod tests {
                     mode: Mode::Headless,
                     checkout: "/data/clones/x/checkout".to_owned(),
                     session: "s1".to_owned(),
+                    unsandboxed: false,
                 },
                 |handle| format!("branch-{handle}"),
             )

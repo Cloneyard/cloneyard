@@ -542,6 +542,10 @@
           },
           "state": {
             "$ref": "#/components/schemas/State"
+          },
+          "unsandboxed": {
+            "description": "Whether the clone runs without the sandbox: when the node's settings say `unsandboxed = true`, and for every clone started before the sandbox existed.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -553,6 +557,7 @@
           "state",
           "branch",
           "checkout",
+          "unsandboxed",
           "sessions"
         ],
         "type": "object"

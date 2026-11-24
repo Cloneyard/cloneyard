@@ -19,6 +19,8 @@ pub struct NewClone {
     pub checkout: String,
     /// The provider's id of its first session.
     pub session: String,
+    /// Whether it runs without the sandbox.
+    pub unsandboxed: bool,
 }
 
 impl Store {
@@ -53,6 +55,7 @@ impl Store {
                     ("reason", Value::Null),
                     ("branch", json!(branch(handle))),
                     ("checkout", json!(clone.checkout)),
+                    ("unsandboxed", json!(clone.unsandboxed)),
                 ],
             )?;
             changes.insert(
@@ -195,7 +198,7 @@ fn read(
 ) -> anyhow::Result<Vec<Clone>> {
     let mut statement = connection.prepare(&format!(
         "SELECT clone.id, clone.handle, project.name, account.name, clone.mode, clone.state, \
-         clone.reason, clone.branch, clone.checkout FROM clone \
+         clone.reason, clone.branch, clone.checkout, clone.unsandboxed FROM clone \
          JOIN project ON project.id = clone.project_id \
          JOIN account ON account.id = clone.account_id \
          WHERE {condition} ORDER BY clone.handle"
@@ -211,12 +214,14 @@ fn read(
             row.get::<_, Option<String>>(6)?,
             row.get::<_, String>(7)?,
             row.get::<_, String>(8)?,
+            row.get::<_, bool>(9)?,
         ))
     })?;
     let mut sessions = connection
         .prepare("SELECT id, provider_id FROM session WHERE clone_id = ?1 ORDER BY rowid")?;
     rows.map(|row| {
-        let (id, handle, project, account, mode, state, reason, branch, checkout) = row?;
+        let (id, handle, project, account, mode, state, reason, branch, checkout, unsandboxed) =
+            row?;
         let sessions = sessions
             .query_map([&id], |row| Ok((row.get::<_, String>(0)?, row.get(1)?)))?
             .map(|session| {
@@ -237,6 +242,7 @@ fn read(
             reason,
             branch,
             checkout,
+            unsandboxed,
             sessions,
         })
     })
@@ -305,6 +311,7 @@ mod tests {
             mode: Mode::Headless,
             checkout: format!("/data/clones/{id}/checkout"),
             session: session.to_owned(),
+            unsandboxed: false,
         };
         store
             .add_clone(fixture.node, clone, |handle| format!("branch-{handle}"))
@@ -353,6 +360,32 @@ mod tests {
             format!("/data/clones/{}/checkout", clone.id)
         );
         assert_eq!(listed, [clone]);
+    }
+
+    #[tokio::test]
+    async fn a_clone_added_unsandboxed_reads_back_unsandboxed() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let fixture = fixture(&store).await;
+        let id = Ulid::generate();
+        let clone = NewClone {
+            id,
+            project_id: fixture.project,
+            repo_id: fixture.repo,
+            account_id: fixture.account,
+            mode: Mode::Headless,
+            checkout: format!("/data/clones/{id}/checkout"),
+            session: "2f6c".to_owned(),
+            unsandboxed: true,
+        };
+
+        let added = store
+            .add_clone(fixture.node, clone, |handle| format!("branch-{handle}"))
+            .await
+            .unwrap();
+
+        assert!(added.unsandboxed);
+        assert_eq!(store.clones(fixture.node).await.unwrap(), [added]);
     }
 
     #[tokio::test]
@@ -414,6 +447,7 @@ mod tests {
                         "reason": null,
                         "branch": "branch-CT-0001",
                         "checkout": clone.checkout,
+                        "unsandboxed": false,
                     }),
                 },
                 Logged {

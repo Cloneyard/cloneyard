@@ -296,6 +296,7 @@ mod tests {
             mode: Mode::Headless,
             checkout: "/data/clones/x/checkout".to_owned(),
             session: "s1".to_owned(),
+            unsandboxed: false,
         }
     }
 

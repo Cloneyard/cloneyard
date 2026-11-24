@@ -161,6 +161,8 @@ pub struct Clone {
     pub branch: String,
     /// The path of the checkout on this node.
     pub checkout: String,
+    /// Whether the clone runs without the sandbox: when the node's settings say `unsandboxed = true`, and for every clone started before the sandbox existed.
+    pub unsandboxed: bool,
     /// In the order they started.
     pub sessions: Vec<Session>,
 }

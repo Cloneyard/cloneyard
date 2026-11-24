@@ -154,6 +154,7 @@ fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
         reason: None,
         branch: "cloneyard/ct-0001".to_owned(),
         checkout: "/data/clones/x/checkout".to_owned(),
+        unsandboxed: false,
         sessions: vec![Session {
             id: session,
             provider_id: "2f6c".to_owned(),
@@ -174,6 +175,7 @@ fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
             "reason": null,
             "branch": "cloneyard/ct-0001",
             "checkout": "/data/clones/x/checkout",
+            "unsandboxed": false,
             "sessions": [{"id": session.to_string(), "provider_id": "2f6c"}]
         })
     );

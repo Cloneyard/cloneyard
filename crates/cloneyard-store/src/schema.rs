@@ -14,6 +14,7 @@ pub(crate) fn migrations() -> Vec<M<'static>> {
         M::up(include_str!("../migrations/0003-change-log-ops.sql")),
         M::up(include_str!("../migrations/0004-account.sql")),
         M::up(include_str!("../migrations/0005-clone.sql")),
+        M::up(include_str!("../migrations/0006-clone-unsandboxed.sql")),
     ]
 }
 
@@ -170,7 +171,7 @@ mod tests {
 
         let connection = open_latest(&dir);
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 6);
         assert_eq!(pragma::<String>(&connection, "journal_mode"), "wal");
         assert_eq!(pragma::<i64>(&connection, "foreign_keys"), 1);
         assert!(!dir.path().join("backups").exists());
@@ -202,7 +203,7 @@ mod tests {
 
         let after = unix_seconds();
         let expected = vec![("cloneyard".to_owned(), "api".to_owned())];
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 6);
         let paths: i64 = connection
             .query_row("SELECT count(*) FROM repo_path", [], |row| row.get(0))
             .unwrap();
@@ -237,7 +238,7 @@ mod tests {
 
         let connection = open(&path, migrations()).unwrap();
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 6);
         let counts: (i64, i64, i64) = connection
             .query_row(
                 "SELECT (SELECT count(*) FROM project), (SELECT count(*) FROM account), \
@@ -268,7 +269,7 @@ mod tests {
 
         let connection = open(&path, migrations()).unwrap();
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 5);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 6);
         let counts: (i64, i64, i64) = connection
             .query_row(
                 "SELECT (SELECT count(*) FROM account), (SELECT count(*) FROM clone), \
@@ -281,6 +282,35 @@ mod tests {
         let [backup] = backups(&dir).try_into().unwrap();
         let name = backup.file_name().unwrap().to_str().unwrap();
         assert!(name.starts_with("cloneyard-v4-"), "{name}");
+    }
+
+    #[test]
+    fn backs_up_a_v5_database_and_marks_the_clones_in_it_unsandboxed() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cloneyard.db");
+        let v5: Vec<M<'static>> = migrations().into_iter().take(5).collect();
+        let connection = open(&path, v5).unwrap();
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO project (id, name) VALUES ('{PROJECT}', 'app'); \
+                 INSERT INTO repo (id, project_id, name) VALUES ('{REPO}', '{PROJECT}', 'app'); \
+                 INSERT INTO account (id, name, provider) VALUES ('{ACCOUNT}', 'personal', 'claude-code'); \
+                 INSERT INTO clone (id, node_id, handle, project_id, repo_id, account_id, mode, state, branch, checkout) \
+                 VALUES ('{CLONE}', 'node', 1, '{PROJECT}', '{REPO}', '{ACCOUNT}', 'headless', 'done', 'cloneyard/ct-0001', '/data/clones/x/checkout');"
+            ))
+            .unwrap();
+        drop(connection);
+
+        let connection = open(&path, migrations()).unwrap();
+
+        let unsandboxed: i64 = connection
+            .query_row("SELECT unsandboxed FROM clone", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 6);
+        assert_eq!(unsandboxed, 1);
+        let [backup] = backups(&dir).try_into().unwrap();
+        let name = backup.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("cloneyard-v5-"), "{name}");
     }
 
     #[test]
@@ -355,13 +385,13 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "database schema v7 is newer than this cloneyard (v5); \
+                "database schema v8 is newer than this cloneyard (v6); \
                  upgrade cloneyard or restore a file from {}",
                 dir.path().join("backups").display()
             )
         );
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 7);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 8);
     }
 
     #[test]
