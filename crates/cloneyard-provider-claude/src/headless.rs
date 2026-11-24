@@ -25,6 +25,13 @@ pub fn command(dir: &Path, session_id: Uuid) -> Command {
     claude
 }
 
+/// Turns off what can't work inside Cloneyard's sandbox: Claude Code's own sandbox, whose `bwrap` needs to mount, and the auto-updater, which would replace the `claude` that runs outside.
+pub fn inside_sandbox(claude: &mut Command) {
+    claude
+        .args(["--settings", r#"{"sandbox":{"enabled":false}}"#])
+        .env("DISABLE_AUTOUPDATER", "1");
+}
+
 /// The line on stdin that sends `text` as the user's next message.
 #[must_use]
 pub fn user_message(text: &str) -> String {
@@ -92,7 +99,7 @@ mod tests {
     use serde_json::{Value, json};
     use uuid::Uuid;
 
-    use super::{Event, Outcome, command, parse, user_message};
+    use super::{Event, Outcome, command, inside_sandbox, parse, user_message};
 
     #[test]
     fn the_command_reads_and_writes_stream_json_on_the_given_session_without_permission_prompts() {
@@ -120,6 +127,29 @@ mod tests {
                 "none",
             ]
         );
+    }
+
+    #[test]
+    fn inside_the_sandbox_claude_runs_without_its_own_sandbox_and_auto_updater() {
+        let mut claude = command(Path::new("/data/claude"), Uuid::new_v4());
+
+        inside_sandbox(&mut claude);
+
+        let args: Vec<&str> = claude
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        let updater = claude
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == "DISABLE_AUTOUPDATER")
+            .and_then(|(_, value)| value);
+        assert_eq!(
+            args[args.len() - 2..],
+            ["--settings", r#"{"sandbox":{"enabled":false}}"#]
+        );
+        assert_eq!(updater, Some(std::ffi::OsStr::new("1")));
     }
 
     #[test]
