@@ -14,6 +14,7 @@ cloneyard-api = { path = "crates/cloneyard-api" }
 cloneyard-daemon = { path = "crates/cloneyard-daemon" }
 cloneyard-provider-claude = { path = "crates/cloneyard-provider-claude" }
 cloneyard-rpc = { path = "crates/cloneyard-rpc" }
+cloneyard-sandbox = { path = "crates/cloneyard-sandbox" }
 cloneyard-store = { path = "crates/cloneyard-store" }
 schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }

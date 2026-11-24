@@ -8,6 +8,7 @@ exceptions = [
     { crate = "cloneyard-daemon", allow = ["AGPL-3.0-only"] },
     { crate = "cloneyard-provider-claude", allow = ["AGPL-3.0-only"] },
     { crate = "cloneyard-rpc", allow = ["AGPL-3.0-only"] },
+    { crate = "cloneyard-sandbox", allow = ["AGPL-3.0-only"] },
     { crate = "cloneyard-store", allow = ["AGPL-3.0-only"] },
 ]
 
