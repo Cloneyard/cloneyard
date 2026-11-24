@@ -24,10 +24,6 @@ pub enum Error {
     HiddenInside { hidden: PathBuf, granted: PathBuf },
     #[error("invalid policy: {0}")]
     Policy(serde_json::Error),
-    #[error("cannot list the open file descriptors: {0}")]
-    Fds(io::Error),
-    #[error("the clone would inherit file descriptor {0}")]
-    InheritedFd(String),
     #[error("cannot open {}: {error}", path.display())]
     Open { path: PathBuf, error: io::Error },
     #[error("cannot apply Landlock: {0}")]
@@ -115,7 +111,7 @@ fn find(inner: &Command) -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
 }
 
-/// Restricts this process to the policy in JSON, then replaces it with `program`; it returns only when one of the two fails.
+/// Restricts this process to the policy in JSON, then replaces it with `program`, which inherits no descriptor but stdin, stdout and stderr; it returns only when one of the two fails.
 #[must_use]
 pub fn enter(policy: &str, program: &OsStr, args: &[OsString]) -> Error {
     if let Err(error) = restrict(policy) {
@@ -130,24 +126,10 @@ pub fn enter(policy: &str, program: &OsStr, args: &[OsString]) -> Error {
 
 fn restrict(policy: &str) -> Result<(), Error> {
     let policy: Policy = serde_json::from_str(policy)?;
-    if let Some(fd) = inherited_fds().map_err(Error::Fds)?.into_iter().next() {
-        return Err(Error::InheritedFd(fd));
-    }
+    // The daemon can inherit descriptors from whatever started it, so none but stdio may reach the program.
+    close_fds::set_fds_cloexec(3, &[]);
     files::restrict(&policy)?;
     sockets::filter()
-}
-
-/// The open file descriptors other than stdin, stdout and stderr.
-fn inherited_fds() -> io::Result<Vec<String>> {
-    let listed: Vec<String> = fs::read_dir("/proc/self/fd")?
-        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
-        .collect::<io::Result<_>>()?;
-    // The listing had a descriptor of its own, which is closed by now.
-    Ok(listed
-        .into_iter()
-        .filter(|fd| !matches!(fd.as_str(), "0" | "1" | "2"))
-        .filter(|fd| fs::symlink_metadata(Path::new("/proc/self/fd").join(fd)).is_ok())
-        .collect())
 }
 
 #[cfg(test)]

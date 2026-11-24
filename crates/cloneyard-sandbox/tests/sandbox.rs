@@ -57,12 +57,28 @@ fn probe() {
         "unix-datagram" => UnixDatagram::unbound().map(drop),
         "socketpair" => UnixStream::pair().map(drop),
         "io-uring" => io_uring::IoUring::new(8).map(drop),
+        "fds" => {
+            println!("result: {}", open_fds().join(" "));
+            return;
+        }
         _ => panic!("no probe {what}"),
     };
     match result {
         Ok(()) => println!("result: ok"),
         Err(error) => println!("result: {error}"),
     }
+}
+
+/// The descriptors open in this process, without the one that lists them.
+fn open_fds() -> Vec<String> {
+    let listed: Vec<String> = fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    listed
+        .into_iter()
+        .filter(|fd| fs::symlink_metadata(PathBuf::from("/proc/self/fd").join(fd)).is_ok())
+        .collect()
 }
 
 /// What `probe` printed after entering a sandbox with `policy`.
@@ -216,19 +232,16 @@ fn io_uring_fails_with_eperm() {
 }
 
 #[test]
-fn a_clone_that_would_inherit_a_descriptor_does_not_start() {
+fn a_descriptor_the_sandbox_inherited_does_not_reach_the_program() {
     let (_dir, dir) = dir();
     fs::write(dir.join("leaked"), "").unwrap();
     let policy = policy(&[], &[], &[]);
 
-    let result = sandboxed_with(&policy, "read /dev/null", |child| {
+    let result = sandboxed_with(&policy, "fds", |child| {
         child.env(LEAK, dir.join("leaked"));
     });
 
-    assert!(
-        result.starts_with("the clone would inherit file descriptor "),
-        "{result}"
-    );
+    assert_eq!(result, "0 1 2");
 }
 
 #[test]
