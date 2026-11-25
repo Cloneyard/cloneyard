@@ -11,13 +11,13 @@ Everything except:
 
 - the keys, tokens and logins in your home, such as `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh`, `~/.claude`, `~/.claude.json`, keyrings, browser profiles and the credential files of cargo, npm, PyPI and Composer
 - the data directory, apart from the clone's own directory and its account's
-- every account's directory and every repo on the node, apart from the objects of its own repo, which its checkout reads
+- every account's directory and every repo on the node, apart from the objects of its own repo, which its checkout reads, and the `cy` binary, which its hooks run
 
 Reading your repo's `.env` fails with `Permission denied`. A clone can still list the names of files in a hidden directory, but not open them.
 
 ## What a clone writes
 
-- its own directory, `clones/<id>` in the data directory, checkout included
+- its own directory, `clones/<id>` in the data directory, its checkout and its [spool](/cloneyard/hook-events) included
 - its account's directory
 - `caches` in the data directory, where `XDG_CACHE_HOME`, `CARGO_HOME`, `npm_config_cache` and `GOMODCACHE` point
 - `/tmp` and `/dev`

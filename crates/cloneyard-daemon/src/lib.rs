@@ -11,6 +11,7 @@ mod project;
 mod router;
 mod run;
 mod sandbox;
+pub mod spool;
 
 pub use config::{Config, Log};
 pub use daemon::Daemon;

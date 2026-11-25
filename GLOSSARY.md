@@ -59,3 +59,11 @@ _Avoid_: background, batch, job
 **Sandbox**:
 The boundary a clone runs in, which limits what it reads, writes and reaches on its node; a clone outside it is unsandboxed.
 _Avoid_: jail, container, isolation
+
+**Hook event**:
+What one hook of a clone's provider reports, such as a tool call, a permission prompt or the end of a turn; a clone's hook events keep the order they ran in.
+_Avoid_: hook, callback, notification
+
+**Spool**:
+The directory in a clone's own one where its hook events wait for the daemon, a file each, until the daemon records them.
+_Avoid_: queue, inbox, outbox

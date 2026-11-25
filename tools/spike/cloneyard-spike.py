@@ -224,6 +224,7 @@ rec = {
     "t": time.time(), "source": src, "event": data.get("hook_event_name"),
     "session_id": data.get("session_id"), "transcript_path": data.get("transcript_path"),
     "cwd": data.get("cwd"), "tool_name": data.get("tool_name"), "keys": sorted(data.keys()),
+    "notification_type": data.get("notification_type"),
     "config_dir_env": os.environ.get("CLAUDE_CONFIG_DIR"),
     "telemetry_env": {k: (v if k != "OTEL_EXPORTER_OTLP_ENDPOINT" or v.startswith("http://127.0.0.1") else "<not ours>")
                       for k, v in os.environ.items() if k in TELEMETRY},
@@ -234,8 +235,13 @@ with open(log, "a") as f:
 
 HOOK_PY = HOOK_PY % (repr(TELEMETRY_ENV),)
 
-HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SessionEnd"]
-TOOL_EVENTS = ("PreToolUse", "PostToolUse")
+HOOK_EVENTS = [
+    "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
+    "SubagentStart", "SubagentStop", "PreCompact", "Stop", "SessionEnd",
+]
+TOOL_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
+# The hooks a headless turn with a tool call fires; the others need a failure, a subagent, a compaction or a prompt.
+HEADLESS_HOOKS = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
 
 
 def hook_block(command):
@@ -1208,7 +1214,7 @@ def t_headless(ctx, r):
         "--include-hook-events", "--model", ctx.model, "--session-id", sid,
         "--append-system-prompt-file", str(append),
         "--plugin-dir", str(plugin), "--settings", json.dumps(settings_hooks(hook_py, hook_log)),
-        "--permission-prompts", "none", "--tools", "Bash", "--allowedTools", "Bash(echo *)",
+        "--permission-prompts", "none", "--tools", "Bash", "--allowedTools", "Bash(echo *)", "Bash(ls *)",
     ]
     r.data["argv"] = argv
     s = StreamSession(argv, ctx.env(recv.env()), repo, ctx.out / "headless-stream.jsonl", ctx.out / "headless-stderr.txt")
@@ -1218,6 +1224,8 @@ def t_headless(ctx, r):
         alive_after_turn1 = s.p.poll() is None
         s.send_user("Now use the Bash tool to run exactly: touch cy-spike-denied.txt. Then reply in one word: did it work?")
         s.wait_results(2, ctx.args.timeout)
+        s.send_user("Now use the Bash tool to run exactly: ls cy-spike-missing. Then reply in one word: did it work?")
+        s.wait_results(3, ctx.args.timeout)
     finally:
         rc = s.close()
     wait_until(lambda: recv.count("/v1/logs") > 0, 8)
@@ -1234,7 +1242,7 @@ def t_headless(ctx, r):
         r.check("--session-id honoured", init.get("session_id") == sid, f"got {init.get('session_id')}")
         aks = init.get("apiKeySource")
         r.check("plan auth (apiKeySource none)", aks in (None, "none"), f"apiKeySource={aks}", critical=False)
-    r.check("two turns on one process", len(results) >= 2 and alive_after_turn1, f"results={len(results)} rc={rc}")
+    r.check("three turns on one process", len(results) >= 3 and alive_after_turn1, f"results={len(results)} rc={rc}")
     r.check("ends by itself once stdin closes after the last result", s.ended_on_eof and rc == 0, f"rc={rc}")
     if results:
         r.data["result_keys"] = sorted(results[0].keys())
@@ -1268,7 +1276,12 @@ def t_headless(ctx, r):
     r.data["hooks_fired"] = {k: sorted(v) for k, v in by_src.items()}
     for src in ("plugin", "settings"):
         got = by_src.get(src, set())
-        r.check(f"{src} hooks fire (PreToolUse, Stop)", {"PreToolUse", "Stop"} <= got, f"got {sorted(got)}")
+        r.check(f"{src} hooks fire ({', '.join(sorted(HEADLESS_HOOKS))})", HEADLESS_HOOKS <= got,
+                f"got {sorted(got)}")
+    got = by_src.get("settings", set())
+    r.check("SessionEnd fires once stdin closes", "SessionEnd" in got, f"got {sorted(got)}", critical=False)
+    failed = [h for h in hooks if h.get("source") == "settings" and h.get("event") == "PostToolUseFailure"]
+    r.check("a failing Bash command fires PostToolUseFailure", bool(failed), f"got {sorted(got)}", critical=False)
     if hooks:
         r.data["hook_input_keys"] = sorted({k for h in hooks for k in h.get("keys", [])})
         tp = next((h["transcript_path"] for h in hooks if h.get("transcript_path")), None)
@@ -1346,7 +1359,10 @@ def t_cc_sandbox(ctx, r):
 
 def t_osc7501(ctx, r):
     repo = ctx.repo("osc7501")
-    argv = [ctx.claude, "--model", ctx.model, "--permission-mode", ctx.manual_mode]
+    hook_log = ctx.out / "osc7501-hooks.jsonl"
+    _, hook_py = make_plugin(ctx, "plugin-osc7501", hook_log)
+    argv = [ctx.claude, "--model", ctx.model, "--permission-mode", ctx.manual_mode,
+            "--settings", json.dumps(settings_hooks(hook_py, hook_log))]
     p = Pty(argv, ctx.env(pty=True), repo, ctx.out / "osc7501-pty.log")
     try:
         ready, pressed = handle_startup_dialogs(
@@ -1373,6 +1389,12 @@ def t_osc7501(ctx, r):
             r.check("blocked kind=permission reported", bool(b) and b.get("kind") == "permission",
                     f"got {b}", critical=False)
             if b:
+                def prompted():
+                    return [h for h in read_jsonl(hook_log)
+                            if h.get("event") == "Notification" and h.get("notification_type") == "permission_prompt"]
+                wait_until(lambda: bool(prompted()), 10)
+                r.check("the permission prompt fires Notification with permission_prompt", bool(prompted()),
+                        f"notifications: {[h.get('notification_type') for h in read_jsonl(hook_log) if h.get('event') == 'Notification']}")
                 time.sleep(0.5)
                 p._write(b"\x1b")  # Esc = reject
                 p.wait_state(lambda s: s.get("state") in ("idle", "done"), 30, since=time.time())
@@ -1384,6 +1406,7 @@ def t_osc7501(ctx, r):
     r.check("clear on exit", any(s.get("state") == "clear" for s in p.states(t3 - 0.01)), "", critical=False)
     r.data["states_seen"] = [str(s.get("state")) + (":" + s["kind"] if s.get("kind") else "") for s in p.states()][:60]
     r.data["app"] = next((s.get("app") for s in p.states() if s.get("app")), None)
+    r.data["hooks_fired"] = sorted({h.get("event") for h in read_jsonl(hook_log) if h.get("event")})
     (ctx.out / "osc7501-screen.txt").write_text(p.screen(200000))
     return r.finish()
 
@@ -1523,6 +1546,32 @@ def t_sandbox_claude(ctx, r):
     return r.finish()
 
 
+def t_hooks_off(ctx, r):
+    repo = ctx.repo("hooks-off")
+    claude_dir = repo / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    for name in ("settings.json", "settings.local.json"):
+        (claude_dir / name).write_text(json.dumps({"disableAllHooks": True}))
+    fired = {}
+    for guard in (True, False):
+        hook_log = ctx.out / f"hooks-off-{'guard' if guard else 'no-guard'}.jsonl"
+        _, hook_py = make_plugin(ctx, f"plugin-hooks-off-{guard}", hook_log)
+        settings = settings_hooks(hook_py, hook_log)
+        if guard:
+            settings["disableAllHooks"] = False
+        cmd = [ctx.claude, "-p", PONG_PROMPT, "--model", ctx.model, "--output-format", "json", "--tools", "",
+               "--settings", json.dumps(settings)]
+        rc, out, err, _ = run(cmd, env=ctx.env(), cwd=repo, timeout=ctx.args.timeout)
+        r.data["guard" if guard else "no_guard"] = {"rc": rc, "stderr": tail(err, 400)}
+        fired[guard] = sorted({e.get("event") for e in read_jsonl(hook_log) if e.get("event")})
+    r.data["hooks_fired"] = {"with false in --settings": fired[True], "without": fired[False]}
+    r.check("hooks of --settings with disableAllHooks false fire despite the checkout's true",
+            {"SessionStart", "Stop"} <= set(fired[True]), f"got {fired[True]}")
+    r.check("without that false the checkout's disableAllHooks turns them off", not fired[False],
+            f"got {fired[False]}", critical=False)
+    return r.finish()
+
+
 def t_cc_sandbox_inside(ctx, r):
     abi = landlock_abi()
     if not abi or abi < 1 or platform.machine() not in SECCOMP_ARCH:
@@ -1633,14 +1682,18 @@ TESTS = [
     ("seccomp", t_seccomp, False, False, "seccomp available, and Cloneyard's filter on Unix sockets enforced"),
     ("bwrap", t_bwrap, False, False, "bubblewrap + socat for the native CC sandbox, user namespaces, bwrap inside Landlock"),
     ("headless", t_headless, True, False,
-     "stream-json multi-turn on one process, --session-id, --append-system-prompt-file, plugin + --settings hooks, "
+     "stream-json multi-turn on one process, --session-id, --append-system-prompt-file, plugin + --settings hooks "
+     "including PostToolUseFailure and SessionEnd, "
      "--permission-prompts none, rate_limit_event, local OTLP/HTTP JSON receiver, the end on stdin EOF"),
     ("json_schema", t_json_schema, True, False, "--json-schema structured output"),
     ("cc_sandbox", t_cc_sandbox, True, False, "native CC sandbox: Bash auto-allowed inside cwd, blocked outside"),
-    ("osc7501", t_osc7501, True, False, "interactive session in a PTY: OSC 7501 probe, idle/working/done/blocked, clear"),
+    ("osc7501", t_osc7501, True, False,
+     "interactive session in a PTY: OSC 7501 probe, idle/working/done/blocked, clear, Notification permission_prompt"),
     ("background", t_background, True, False, "claude --bg, agents --json, logs, stop, rm; hooks and OTel env in bg"),
     ("landlock_claude", t_landlock_claude, True, False, "claude -p under Landlock with a narrow writable list"),
     ("sandbox_claude", t_sandbox_claude, True, False, "claude -p and its hooks under Landlock and seccomp with a clone's write list"),
+    ("hooks_off", t_hooks_off, True, False,
+     "a checkout's disableAllHooks doesn't turn off the hooks of --settings that say false"),
     ("cc_sandbox_inside", t_cc_sandbox_inside, True, False,
      "native CC sandbox inside Landlock and seccomp: what Bash does when bwrap can't start"),
     ("remote_control", t_remote_control, True, True, "--remote-control prints a claude.ai/code URL (opt-in: --with-rc)"),

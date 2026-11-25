@@ -178,6 +178,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "ulid",
 ]
 
 [[package]]
@@ -207,6 +208,7 @@ name = "cloneyard-provider-claude"
 version = "0.0.1"
 dependencies = [
  "serde_json",
+ "thiserror",
  "tokio",
  "uuid",
 ]
@@ -250,6 +252,7 @@ dependencies = [
  "rusqlite_migration",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "ulid",
 ]

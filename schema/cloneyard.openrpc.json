@@ -450,6 +450,53 @@
         }
       ],
       "paramStructure": "by-name"
+    },
+    {
+      "name": "clone.events",
+      "summary": "Returns a clone's last hook events, oldest first",
+      "params": [
+        {
+          "name": "handle",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Handle"
+          }
+        },
+        {
+          "name": "limit",
+          "required": true,
+          "schema": {
+            "description": "How many of the newest events to return.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        }
+      ],
+      "result": {
+        "name": "CloneEventsResult",
+        "schema": {
+          "$ref": "#/components/schemas/CloneEventsResult"
+        }
+      },
+      "errors": [
+        {
+          "code": 1202,
+          "message": "No such clone",
+          "data": {
+            "type": "object",
+            "properties": {
+              "handle": {
+                "$ref": "#/components/schemas/Handle"
+              }
+            },
+            "required": [
+              "handle"
+            ]
+          }
+        }
+      ],
+      "paramStructure": "by-name"
     }
   ],
   "components": {
@@ -562,6 +609,21 @@
         ],
         "type": "object"
       },
+      "CloneEventsResult": {
+        "properties": {
+          "events": {
+            "description": "Oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/HookEvent"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "type": "object"
+      },
       "CloneListResult": {
         "properties": {
           "clones": {
@@ -581,6 +643,42 @@
         "description": "A clone's short name on its node, such as `CT-0042`.",
         "pattern": "^CT-[0-9]{4,}$",
         "type": "string"
+      },
+      "HookEvent": {
+        "description": "What one hook of a clone's provider reported, such as a tool call or the end of a turn.",
+        "properties": {
+          "at": {
+            "description": "When the hook ran, in milliseconds since the Unix epoch.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "hook": {
+            "description": "The provider's name of the hook, such as `PreToolUse`.",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+            "type": "string"
+          },
+          "session": {
+            "description": "The provider's id of the session it ran in.",
+            "type": "string"
+          },
+          "tool": {
+            "description": "The tool of a tool hook, such as `Bash`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "session",
+          "hook"
+        ],
+        "type": "object"
       },
       "ListResult": {
         "properties": {
@@ -698,7 +796,17 @@
         "oneOf": [
           {
             "const": "working",
-            "description": "Its process runs.",
+            "description": "It works on its turn.",
+            "type": "string"
+          },
+          {
+            "const": "blocked",
+            "description": "It waits for a permission.",
+            "type": "string"
+          },
+          {
+            "const": "idle",
+            "description": "It ended its turn and waits for a message.",
             "type": "string"
           },
           {

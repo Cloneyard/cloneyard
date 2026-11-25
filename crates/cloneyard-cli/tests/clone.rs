@@ -1,8 +1,9 @@
 use std::env;
 use std::fs;
+use std::io::Write as _;
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use common::{
     Daemon, LOG_IN, Node, account_add, bin_path, claude_dir, fake_claude, project_add,
@@ -17,6 +18,7 @@ mkdir -p "$out"
 printf '%s\n' "$@" > "$out/args"
 printf '%s' "$CLAUDE_CONFIG_DIR" > "$out/config-dir"
 printf '%s' "${ANTHROPIC_API_KEY-unset}" > "$out/api-key"
+printf '%s' "${CLONEYARD_SPOOL-unset}" > "$out/spool"
 pwd > "$out/cwd"
 git branch --show-current > "$out/branch"
 echo $$ > "$out/pid"
@@ -25,6 +27,10 @@ printf '%s\n' "$prompt" > "$out/prompt"
 printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$session""#;
 
 const WAIT_FOR_GO: &str = r#"while [ ! -e "$HOME/go" ]; do sleep 0.02; done"#;
+
+/// `hook <event> <fields>` runs `cy hook` as Claude Code does, with the session id and `fields` in the JSON on stdin.
+const HOOK: &str =
+    r#"hook() { printf '{"session_id":"%s"%s}' "$session" "$2" | "$CY" hook "$1"; }"#;
 
 const DONE: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"pong"}'
 cat > /dev/null"#;
@@ -73,10 +79,12 @@ done
     fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// A daemon that finds the fake `claude` first on its `PATH`.
+/// A daemon that finds the fake `claude` first on its `PATH`, which can run `cy` as `$CY`.
 fn start_daemon(node: &Node) -> Daemon {
     let mut daemon = node.cy("daemon");
-    daemon.env("PATH", bin_path(node));
+    daemon
+        .env("PATH", bin_path(node))
+        .env("CY", env!("CARGO_BIN_EXE_cy"));
     node.spawn(daemon)
 }
 
@@ -178,12 +186,13 @@ fn the_clone_runs_claude_headless_on_its_session_and_account_in_its_checkout() {
     let session = field(&shown, "session");
     let prompt: serde_json::Value =
         serde_json::from_str(&recorded(&node, &session, "prompt")).unwrap();
+    let cy = fs::canonicalize(env!("CARGO_BIN_EXE_cy")).unwrap();
     assert_eq!(
         recorded(&node, &session, "args"),
         format!(
             "-p\n--input-format\nstream-json\n--output-format\nstream-json\n--verbose\n\
-             --session-id\n{session}\n--permission-prompts\nnone\n\
-             --settings\n{{\"sandbox\":{{\"enabled\":false}}}}\n"
+             --session-id\n{session}\n--permission-prompts\nnone\n--settings\n{}\n",
+            cloneyard_provider_claude::settings(cy.to_str().unwrap(), true)
         )
     );
     assert_eq!(
@@ -191,6 +200,10 @@ fn the_clone_runs_claude_headless_on_its_session_and_account_in_its_checkout() {
         claude_dir(&node, "personal").to_str().unwrap()
     );
     assert_eq!(recorded(&node, &session, "api-key"), "unset");
+    assert_eq!(
+        PathBuf::from(recorded(&node, &session, "spool")),
+        Path::new(&field(&shown, "checkout")).with_file_name("spool")
+    );
     assert_eq!(
         recorded(&node, &session, "cwd").trim_end(),
         field(&shown, "checkout")
@@ -544,4 +557,139 @@ fn a_clone_of_a_repo_in_tmp_does_not_start_since_tmp_is_writable_and_names_what_
             home.display()
         )
     );
+}
+
+#[test]
+fn a_clones_state_follows_its_hooks_until_its_result() {
+    let (node, _repo, _daemon) = node_with_project_and_account();
+    fake_headless(
+        &node,
+        &format!(
+            r#"{RECORD}
+{HOOK}
+hook Notification ',"notification_type":"permission_prompt"'
+while [ ! -e "$HOME/answered" ]; do sleep 0.02; done
+hook PostToolUse ',"tool_name":"Bash"'
+hook Stop
+{WAIT_FOR_GO}
+{DONE}"#
+        ),
+    );
+
+    stdout_of_success(&run(&node, "Run the tests"));
+
+    wait_for_state(&node, "CT-0001  app  personal  headless  blocked");
+    fs::write(node.home.path().join("answered"), "").unwrap();
+    wait_for_state(&node, "CT-0001  app  personal  headless  idle");
+    fs::write(node.home.path().join("go"), "").unwrap();
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+}
+
+#[test]
+fn a_clone_cannot_write_into_the_spool_of_another_clone() {
+    let (node, _repo, _daemon) = node_with_project_and_account();
+    fake_headless(&node, &format!("{RECORD}\n{DONE}"));
+    stdout_of_success(&run(&node, "Say pong"));
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    let first = Path::new(&field(&show(&node, "CT-0001"), "checkout")).with_file_name("spool");
+    let forged = first.join("00000000000000000001-1-Stop.json");
+    fake_headless(
+        &node,
+        &format!(
+            r#"{RECORD}
+{{ echo '{{}}' > '{}'; }} 2> "$out/spool-error"
+{DONE}"#,
+            forged.display()
+        ),
+    );
+
+    stdout_of_success(&run(&node, "Forge an event"));
+    wait_for_state(&node, "CT-0002  app  personal  headless  done");
+
+    let session = field(&show(&node, "CT-0002"), "session");
+    let error = recorded(&node, &session, "spool-error");
+    assert!(error.contains("Permission denied"), "{error}");
+    assert!(!forged.exists());
+}
+
+/// The hooks and tools in the `event` lines of `cy clone show <handle>`, without their ages.
+fn events(node: &Node, handle: &str) -> Vec<String> {
+    show(node, handle)
+        .into_iter()
+        .filter(|(key, _)| key == "event")
+        .map(|(_, value)| {
+            let (label, age) = value.rsplit_once("  ").unwrap();
+            assert!(age.ends_with(" ago"), "{value}");
+            label.trim().to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn clone_show_lists_a_clones_tool_calls_among_its_last_events() {
+    let (node, _repo, _daemon) = node_with_project_and_account();
+    fake_headless(
+        &node,
+        &format!(
+            r#"{RECORD}
+{HOOK}
+hook SessionStart ',"source":"startup"'
+hook UserPromptSubmit ',"prompt":"Run the tests"'
+hook PreToolUse ',"tool_name":"Bash","tool_input":{{"command":"cargo test"}}'
+hook PostToolUse ',"tool_name":"Bash","tool_response":{{"stdout":"ok"}}'
+hook Stop
+{DONE}"#
+        ),
+    );
+
+    stdout_of_success(&run(&node, "Run the tests"));
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+
+    let expected = [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse Bash",
+        "PostToolUse Bash",
+        "Stop",
+    ];
+    wait_until("the hook events", || events(&node, "CT-0001") == expected);
+}
+
+#[test]
+fn events_written_while_the_daemon_is_stopped_show_up_after_it_starts_and_leave_the_spool_empty() {
+    let (node, _repo, daemon) = node_with_project_and_account();
+    fake_headless(&node, &format!("{RECORD}\n{DONE}"));
+    stdout_of_success(&run(&node, "Say pong"));
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    let shown = show(&node, "CT-0001");
+    let session = field(&shown, "session");
+    let spool = Path::new(&field(&shown, "checkout")).with_file_name("spool");
+    daemon.terminate();
+
+    for (event, fields) in [
+        ("PreToolUse", r#","tool_name":"Read""#),
+        ("PostToolUse", r#","tool_name":"Read""#),
+        ("SessionEnd", r#","reason":"other""#),
+    ] {
+        let payload = format!(r#"{{"session_id":"{session}"{fields}}}"#);
+        let mut hook = node.cy("hook");
+        hook.arg(event)
+            .env("CLONEYARD_SPOOL", &spool)
+            .stdin(Stdio::piped());
+        let mut child = hook.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+    }
+    let _daemon = start_daemon(&node);
+
+    assert_eq!(
+        events(&node, "CT-0001"),
+        ["PreToolUse Read", "PostToolUse Read", "SessionEnd"]
+    );
+    assert_eq!(fs::read_dir(&spool).unwrap().count(), 0);
 }

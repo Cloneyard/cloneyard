@@ -10,6 +10,7 @@ mod account;
 mod claude;
 mod clone;
 mod connection;
+mod hook;
 mod ping;
 mod project;
 mod rpc;
@@ -40,6 +41,12 @@ enum Command {
     Clones,
     /// Run the daemon in the foreground
     Daemon,
+    /// Write the JSON on stdin into the clone's spool, as Claude Code does for each hook of a clone
+    #[command(hide = true)]
+    Hook {
+        /// The hook, such as `PreToolUse`
+        event: String,
+    },
     /// Check that the daemon answers, and how fast
     Ping,
     /// Add a project
@@ -87,12 +94,12 @@ enum CloneCommand {
         /// The first message to the clone
         prompt: String,
     },
-    /// Show a clone with its reason, branch, checkout and sessions
+    /// Show a clone with its reason, branch, checkout, sessions and last hook events
     Show {
         /// The clone's handle, such as CT-0042 or ct-42
         handle: Handle,
     },
-    /// End a working clone's processes
+    /// End a running clone's processes
     Stop {
         /// The clone's handle, such as CT-0042 or ct-42
         handle: Handle,
@@ -139,6 +146,7 @@ pub fn run() -> ExitCode {
         } => clone::stop(handle),
         Command::Clones => clone::list(),
         Command::Daemon => cloneyard_daemon::run(),
+        Command::Hook { event } => return hook::run(&event),
         Command::Ping => ping::run(),
         Command::Project {
             command: ProjectCommand::Add { path, name },

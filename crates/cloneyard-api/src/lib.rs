@@ -108,6 +108,7 @@ pub fn document() -> Document {
         method::<clone::List>(&mut generator),
         method::<clone::Show>(&mut generator),
         method::<clone::Stop>(&mut generator),
+        method::<clone::Events>(&mut generator),
     ];
     Document {
         openrpc: "1.4.1".to_owned(),

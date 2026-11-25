@@ -1,11 +1,11 @@
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use cloneyard_api::clone::{Clone, Handle, Mode, Session, State};
-use rusqlite::{Connection, Params};
+use rusqlite::{Connection, OptionalExtension as _, Params};
 use serde_json::{Value, json};
 use ulid::Ulid;
 
 use crate::store::{Store, ulid};
-use crate::write::Entity;
+use crate::write::{Changes, Entity};
 
 /// A clone to add, without its handle and its branch, which the node's next handle decides.
 #[derive(Debug, Clone)]
@@ -104,23 +104,19 @@ impl Store {
         .with_context(|| format!("cannot set the state of clone {id}"))
     }
 
-    /// Adds a session with the provider's id `provider_id` to clone `clone_id`.
+    /// Adds a session with the provider's id `provider_id` to clone `clone_id`, unless the clone has it already.
     ///
     /// # Errors
     ///
-    /// When there is no such clone, the session is already known, or the database can't be written.
+    /// When there is no such clone, another clone has the session, or the database can't be written.
     pub async fn add_session(&self, clone_id: Ulid, provider_id: &str) -> anyhow::Result<()> {
         let provider_id = provider_id.to_owned();
-        self.write(move |changes| {
-            changes.insert(
-                Entity::Session,
-                &[
-                    ("id", json!(Ulid::generate())),
-                    ("clone_id", json!(clone_id)),
-                    ("provider_id", json!(provider_id)),
-                ],
-            )
-        })
+        self.write(
+            move |changes| match session(changes, clone_id, &provider_id)? {
+                Ok(_) => Ok(()),
+                Err(owner) => bail!("session {provider_id} belongs to clone {owner}"),
+            },
+        )
         .await
         .with_context(|| format!("cannot add a session to clone {clone_id}"))
     }
@@ -158,7 +154,7 @@ impl Store {
         .with_context(|| format!("cannot read clone {handle}"))
     }
 
-    /// Sets every `working` clone of node `node_id` to `error` with `reason`, and gives their handles.
+    /// Sets every running clone of node `node_id`, one that is `working`, `blocked` or `idle`, to `error` with `reason`, and gives their handles.
     ///
     /// # Errors
     ///
@@ -166,12 +162,14 @@ impl Store {
     pub async fn lose_clones(&self, node_id: Ulid, reason: &str) -> anyhow::Result<Vec<Handle>> {
         let reason = reason.to_owned();
         self.write(move |changes| {
-            let working: Vec<(String, u32)> = changes.query_rows(
-                "SELECT id, handle FROM clone WHERE node_id = ?1 AND state = ?2 ORDER BY handle",
-                (node_id.to_string(), State::Working.to_string()),
+            let [working, blocked, idle] = State::RUNNING.map(|state| state.to_string());
+            let running: Vec<(String, u32)> = changes.query_rows(
+                "SELECT id, handle FROM clone WHERE node_id = ?1 AND state IN (?2, ?3, ?4) \
+                 ORDER BY handle",
+                (node_id.to_string(), working, blocked, idle),
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            for (id, _) in &working {
+            for (id, _) in &running {
                 changes.update(
                     Entity::Clone,
                     &[
@@ -181,7 +179,7 @@ impl Store {
                     ],
                 )?;
             }
-            Ok(working
+            Ok(running
                 .into_iter()
                 .map(|(_, number)| Handle::new(number))
                 .collect())
@@ -189,6 +187,44 @@ impl Store {
         .await
         .context("cannot mark the lost clones")
     }
+}
+
+/// The id of session `provider_id` of clone `clone_id`, which it adds when the session is new, or the clone the session belongs to instead.
+pub(crate) fn session(
+    changes: &mut Changes<'_>,
+    clone_id: Ulid,
+    provider_id: &str,
+) -> anyhow::Result<Result<String, Ulid>> {
+    let known: Option<(String, String)> = changes
+        .query_row(
+            "SELECT id, clone_id FROM session WHERE provider_id = ?1",
+            [provider_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((id, owner)) = known {
+        let owner = ulid(&owner)?;
+        return Ok(if owner == clone_id {
+            Ok(id)
+        } else {
+            Err(owner)
+        });
+    }
+    let id = Ulid::generate().to_string();
+    changes.insert(
+        Entity::Session,
+        &[
+            ("id", json!(id)),
+            ("clone_id", json!(clone_id)),
+            ("provider_id", json!(provider_id)),
+        ],
+    )?;
+    Ok(Ok(id))
+}
+
+pub(crate) fn state_of(text: &str) -> anyhow::Result<State> {
+    serde_json::from_value(Value::String(text.to_owned()))
+        .with_context(|| format!("invalid state {text:?}"))
 }
 
 fn read(
@@ -254,13 +290,8 @@ fn mode_of(text: &str) -> anyhow::Result<Mode> {
         .with_context(|| format!("invalid mode {text:?}"))
 }
 
-fn state_of(text: &str) -> anyhow::Result<State> {
-    serde_json::from_value(Value::String(text.to_owned()))
-        .with_context(|| format!("invalid state {text:?}"))
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicI64;
 
@@ -274,14 +305,14 @@ mod tests {
     use crate::Store;
     use crate::store::tests::{Logged, NOW, change_log, open, open_at, sql};
 
-    struct Fixture {
-        node: Ulid,
+    pub(crate) struct Fixture {
+        pub(crate) node: Ulid,
         project: Ulid,
         repo: Ulid,
         account: Ulid,
     }
 
-    async fn fixture(store: &Store) -> Fixture {
+    pub(crate) async fn fixture(store: &Store) -> Fixture {
         let node_id = store.node_id().await.unwrap();
         let project = store
             .add_project(node_id, "app", "app", "/code/app")
@@ -301,7 +332,7 @@ mod tests {
         }
     }
 
-    async fn add(store: &Store, fixture: &Fixture, session: &str) -> Clone {
+    pub(crate) async fn add(store: &Store, fixture: &Fixture, session: &str) -> Clone {
         let id = Ulid::generate();
         let clone = NewClone {
             id,
@@ -559,17 +590,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loses_only_the_working_clones_of_the_node() {
+    async fn loses_only_the_running_clones_of_the_node() {
         let dir = TempDir::new().unwrap();
         let store = open(&dir).await;
         let fixture = fixture(&store).await;
-        let done = add(&store, &fixture, "a").await;
-        let working = add(&store, &fixture, "b").await;
-        add(&store, &fixture, "c").await;
-        store
-            .set_clone_state(done.id, State::Done, None)
-            .await
-            .unwrap();
+        for (session, state) in [
+            ("a", State::Done),
+            ("b", State::Working),
+            ("c", State::Blocked),
+            ("d", State::Idle),
+            ("e", State::Stopped),
+        ] {
+            let clone = add(&store, &fixture, session).await;
+            store.set_clone_state(clone.id, state, None).await.unwrap();
+        }
 
         let lost = store
             .lose_clones(fixture.node, "lost while the daemon was down")
@@ -585,14 +619,16 @@ mod tests {
             .map(|clone| (clone.state, clone.reason))
             .collect();
         let lost_reason = Some("lost while the daemon was down".to_owned());
-        assert_eq!(lost, [working.handle, Handle::new(3)]);
+        assert_eq!(lost, [2, 3, 4].map(Handle::new));
         assert_eq!(other_node, []);
         assert_eq!(
             states,
             [
                 (State::Done, None),
                 (State::Error, lost_reason.clone()),
-                (State::Error, lost_reason)
+                (State::Error, lost_reason.clone()),
+                (State::Error, lost_reason),
+                (State::Stopped, None),
             ]
         );
     }
@@ -604,15 +640,15 @@ mod tests {
         let fixture = fixture(&store).await;
         add(&store, &fixture, "2f6c").await;
         sql(&dir)
-            .execute("UPDATE clone SET state = 'idle'", [])
+            .execute("UPDATE clone SET state = 'paused'", [])
             .unwrap();
 
         let error = store.clones(fixture.node).await.unwrap_err();
 
         assert_eq!(
             format!("{error:#}"),
-            "cannot list the clones: invalid state \"idle\": \
-             unknown variant `idle`, expected one of `working`, `done`, `error`, `stopped`"
+            "cannot list the clones: invalid state \"paused\": unknown variant `paused`, \
+             expected one of `working`, `blocked`, `idle`, `done`, `error`, `stopped`"
         );
     }
 }

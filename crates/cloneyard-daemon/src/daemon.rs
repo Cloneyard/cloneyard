@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use tokio::net::UnixListener;
+use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 
 use crate::node::Node;
@@ -87,6 +88,16 @@ impl Daemon {
         let node_id = node.id;
         let node = Arc::new(node);
         let router = Arc::new(router::router(Arc::clone(&node)));
+        let (stop_following, stopped) = oneshot::channel::<()>();
+        let following = tokio::spawn({
+            let node = Arc::clone(&node);
+            async move {
+                let stopped = async {
+                    let _ = stopped.await;
+                };
+                node.spools.follow(&node.store, stopped).await;
+            }
+        });
         let mut connections = JoinSet::new();
         let mut shutdown = pin!(shutdown);
         tracing::info!(
@@ -122,6 +133,10 @@ impl Daemon {
 
         connections.shutdown().await;
         node.processes.shutdown(process::GRACE).await;
+        let _ = stop_following.send(());
+        if let Err(error) = following.await {
+            tracing::error!(%error, "the spool task failed");
+        }
         drop(router);
         drop(listener);
         let removed =

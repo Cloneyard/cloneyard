@@ -21,5 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cy clone run --project <p> --account <a> "<prompt>"` runs Claude Code headless in a checkout of its own, and `cy clones`, `cy clone show` and `cy clone stop` list, show and end clones ([#30](https://github.com/Cloneyard/cloneyard/issues/30)).
 - Clones run in a sandbox of Landlock and seccomp, which hides your secrets, the data directory and the repos from them, lets them write only in their own directory and keeps them off Unix sockets ([#31](https://github.com/Cloneyard/cloneyard/issues/31)).
 - `unsandboxed = true` in `node.toml` runs clones without the sandbox, which they need on a kernel without Landlock, and `cy clones` marks them `unsandboxed` ([#31](https://github.com/Cloneyard/cloneyard/issues/31)).
+- Clones report their Claude Code hooks through a spool in their own directory, which the daemon reads in order, also after it was down, and `cy clone show` lists their last 10 events ([#32](https://github.com/Cloneyard/cloneyard/issues/32)).
+- A running clone is `blocked` while it waits for a permission and `idle` once its turn ends, as its hooks say ([#32](https://github.com/Cloneyard/cloneyard/issues/32)).
 
 [Unreleased]: https://github.com/Cloneyard/cloneyard/commits/master

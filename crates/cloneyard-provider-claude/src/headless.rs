@@ -6,9 +6,9 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 use uuid::Uuid;
 
-/// `claude -p` for the account in `dir`, on session `session_id`, which denies at once any tool that would ask for permission.
+/// `claude -p` for the account in `dir`, on session `session_id` with `settings`, which denies at once any tool that would ask for permission.
 #[must_use]
-pub fn command(dir: &Path, session_id: Uuid) -> Command {
+pub fn command(dir: &Path, session_id: Uuid, settings: &str) -> Command {
     let mut claude = crate::command(dir);
     claude
         .args([
@@ -21,15 +21,8 @@ pub fn command(dir: &Path, session_id: Uuid) -> Command {
             "--session-id",
         ])
         .arg(session_id.to_string())
-        .args(["--permission-prompts", "none"]);
+        .args(["--permission-prompts", "none", "--settings", settings]);
     claude
-}
-
-/// Turns off what can't work inside Cloneyard's sandbox: Claude Code's own sandbox, whose `bwrap` needs to mount, and the auto-updater, which would replace the `claude` that runs outside.
-pub fn inside_sandbox(claude: &mut Command) {
-    claude
-        .args(["--settings", r#"{"sandbox":{"enabled":false}}"#])
-        .env("DISABLE_AUTOUPDATER", "1");
 }
 
 /// The line on stdin that sends `text` as the user's next message.
@@ -99,13 +92,18 @@ mod tests {
     use serde_json::{Value, json};
     use uuid::Uuid;
 
-    use super::{Event, Outcome, command, inside_sandbox, parse, user_message};
+    use super::{Event, Outcome, command, parse, user_message};
 
     #[test]
-    fn the_command_reads_and_writes_stream_json_on_the_given_session_without_permission_prompts() {
+    fn the_command_reads_and_writes_stream_json_on_the_given_session_with_its_settings_and_without_permission_prompts()
+     {
         let session_id = Uuid::new_v4();
 
-        let claude = command(Path::new("/data/accounts/personal/claude"), session_id);
+        let claude = command(
+            Path::new("/data/accounts/personal/claude"),
+            session_id,
+            r#"{"hooks":{}}"#,
+        );
 
         let args: Vec<String> = claude
             .as_std()
@@ -125,31 +123,10 @@ mod tests {
                 &session_id.to_string(),
                 "--permission-prompts",
                 "none",
+                "--settings",
+                r#"{"hooks":{}}"#,
             ]
         );
-    }
-
-    #[test]
-    fn inside_the_sandbox_claude_runs_without_its_own_sandbox_and_auto_updater() {
-        let mut claude = command(Path::new("/data/claude"), Uuid::new_v4());
-
-        inside_sandbox(&mut claude);
-
-        let args: Vec<&str> = claude
-            .as_std()
-            .get_args()
-            .map(|arg| arg.to_str().unwrap())
-            .collect();
-        let updater = claude
-            .as_std()
-            .get_envs()
-            .find(|(name, _)| *name == "DISABLE_AUTOUPDATER")
-            .and_then(|(_, value)| value);
-        assert_eq!(
-            args[args.len() - 2..],
-            ["--settings", r#"{"sandbox":{"enabled":false}}"#]
-        );
-        assert_eq!(updater, Some(std::ffi::OsStr::new("1")));
     }
 
     #[test]

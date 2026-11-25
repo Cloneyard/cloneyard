@@ -1,0 +1,32 @@
+---
+title: Hook events
+description: What a clone's Claude Code hooks tell Cloneyard, how they reach the daemon through the clone's spool, and the states they give a clone.
+---
+
+Each hook of a clone runs `cy hook`, which writes the hook's JSON as a file into the clone's spool, `clones/<id>/spool` in the data directory. The daemon records each event in order and deletes its file. The hooks come through `--settings`, so your own Claude Code settings stay as they are, and `disableAllHooks` in the repo's `.claude/settings.json` doesn't turn them off.
+
+## The hooks
+
+`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Notification`, `SubagentStart`, `SubagentStop`, `PreCompact`, `Stop` and `SessionEnd`.
+
+Each event keeps its hook, tool, session and time, and the JSON without `tool_response`, which can hold a whole file. `cy clone show <handle>` lists a clone's last 10 events.
+
+## States from hooks
+
+| Hook | State of a running clone |
+| --- | --- |
+| `Notification` with `permission_prompt` | `blocked` |
+| `Stop` | `idle` |
+| `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure` | `working` |
+
+A hook never changes `done`, `error` or `stopped`. A headless clone is `idle` for a moment between its `Stop` and its result, and never `blocked`, since it denies every permission prompt.
+
+## While the daemon is down
+
+The events wait in the spool. At start the daemon marks the clones that were running `error`, then records what every spool holds, in order, and empties it.
+
+The daemon drops a file that isn't a hook's JSON, holds more than 16 MiB or names another clone's session, and logs `dropped a hook event` with the file and the reason.
+
+<Aside type="caution">
+A clone can write, change and delete the files in its own spool, so its events are what it chose to report. In the sandbox it can't reach another clone's spool; without the sandbox it can.
+</Aside>

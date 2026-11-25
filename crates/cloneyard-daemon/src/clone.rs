@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use cloneyard_api::clone::{
-    Clone, HandleParams, ListResult, Mode, RunError, RunParams, ShowError, State, StopError,
+    Clone, EventsError, EventsParams, EventsResult, HandleParams, ListResult, Mode, RunError,
+    RunParams, ShowError, State, StopError,
 };
-use cloneyard_provider_claude::headless;
+use cloneyard_provider_claude::{self as provider, headless};
 use cloneyard_store::NewClone;
 use tokio::process::Command;
 use ulid::Ulid;
@@ -19,6 +20,7 @@ use uuid::Uuid;
 use crate::node::Node;
 use crate::process::{self, GRACE};
 use crate::sandbox::{self, Sandboxing};
+use crate::spool;
 
 /// Records a `working` clone, makes its checkout and starts it; a clone whose checkout or start fails ends `error`, with the reason.
 pub(crate) async fn run(
@@ -123,33 +125,45 @@ async fn start(
     prompt: String,
 ) -> Result<(), String> {
     let checkout = Path::new(&clone.checkout);
+    let clone_dir = checkout
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", checkout.display()))?;
     make_checkout(repo, checkout, &clone.branch)
         .await
         .map_err(|error| format!("cannot create the checkout: {error:#}"))?;
-    let mut claude = headless::command(account_dir, session_id);
-    claude.current_dir(checkout);
+    let settings = provider::settings(&node.program, !clone.unsandboxed);
+    let mut claude = headless::command(account_dir, session_id, &settings);
+    claude
+        .current_dir(checkout)
+        .env(spool::VARIABLE, spool::dir(clone_dir));
     let mut command = if clone.unsandboxed {
         claude
     } else {
-        let clone_dir = checkout
-            .parent()
-            .ok_or_else(|| format!("{} has no parent", checkout.display()))?;
         let policy = sandbox::policy(node, env::home_dir().as_deref(), clone_dir, account_dir)
             .await
             .map_err(|error| format!("cannot sandbox the clone: {error:#}"))?;
-        headless::inside_sandbox(&mut claude);
+        provider::inside_sandbox(&mut claude);
         sandbox::use_caches(&mut claude, &node.data_dir);
         cloneyard_sandbox::command(Path::new(sandbox::ENTER), &policy, claude.as_std())
             .map(Command::from)
             .map_err(|error| format!("cannot start claude: {error}"))?
     };
-    let child = command
+    node.spools
+        .watch(clone.id, clone_dir)
+        .map_err(|error| format!("cannot set up the spool: {error:#}"))?;
+    let child = match command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()
-        .map_err(|error| format!("cannot start claude: {error}"))?;
+    {
+        Ok(child) => child,
+        Err(error) => {
+            node.spools.unwatch(&node.store, clone.id).await;
+            return Err(format!("cannot start claude: {error}"));
+        }
+    };
     tracing::info!(handle = %clone.handle, checkout = clone.checkout, "clone started");
     process::watch(
         node,
@@ -238,7 +252,21 @@ pub(crate) async fn show(
         .ok_or(ShowError::UnknownClone { handle }))
 }
 
-/// Ends a working clone's processes and gives it back `stopped`.
+/// The last `limit` hook events of a clone, oldest first.
+pub(crate) async fn events(
+    node: &Node,
+    params: EventsParams,
+) -> anyhow::Result<Result<EventsResult, EventsError>> {
+    let EventsParams { handle, limit } = params;
+    let Some(clone) = node.store.clone_by_handle(node.id, handle).await? else {
+        return Ok(Err(EventsError::UnknownClone { handle }));
+    };
+    Ok(Ok(EventsResult {
+        events: node.store.hook_events(clone.id, limit).await?,
+    }))
+}
+
+/// Ends a running clone's processes and gives it back `stopped`.
 pub(crate) async fn stop(
     node: &Node,
     params: HandleParams,
@@ -247,14 +275,17 @@ pub(crate) async fn stop(
     let Some(clone) = node.store.clone_by_handle(node.id, handle).await? else {
         return Ok(Err(StopError::UnknownClone { handle }));
     };
-    if clone.state != State::Working {
+    if !clone.state.runs() {
         return Ok(Err(StopError::NotRunning {
             handle,
             state: clone.state,
         }));
     }
     if !node.processes.stop(clone.id, GRACE).await {
-        bail!("clone {handle} is working, but this daemon runs no process for it");
+        bail!(
+            "clone {handle} is {}, but this daemon runs no process for it",
+            clone.state
+        );
     }
     node.store
         .clone_by_handle(node.id, handle)
@@ -273,11 +304,11 @@ mod tests {
 
     use cloneyard_api::account::Provider;
     use cloneyard_api::clone::{
-        Clone, Handle, HandleParams, List, Mode, Run, RunError, RunParams, Show, ShowError, State,
-        Stop, StopError,
+        Clone, Events, EventsError, EventsParams, Handle, HandleParams, List, Mode, Run, RunError,
+        RunParams, Show, ShowError, State, Stop, StopError,
     };
     use cloneyard_rpc::ClientError;
-    use cloneyard_store::NewClone;
+    use cloneyard_store::{NewClone, NewHookEvent};
     use tempfile::TempDir;
     use ulid::Ulid;
 
@@ -481,6 +512,78 @@ mod tests {
                     handle: Handle::new(2)
                 },
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn events_gives_a_clones_last_hook_events_and_names_a_handle_it_does_not_know() {
+        let dir = TempDir::new().unwrap();
+        let node = open_node(&dir).await;
+        let clone = with_clone(&node, State::Done).await;
+        for (file, hook) in [("1", "SessionStart"), ("2", "PreToolUse"), ("3", "Stop")] {
+            node.store
+                .add_hook_event(NewHookEvent {
+                    clone_id: clone.id,
+                    session: "s1".to_owned(),
+                    hook: hook.to_owned(),
+                    tool: None,
+                    at: 1,
+                    file: file.to_owned(),
+                    payload: "{}".to_owned(),
+                    state: None,
+                })
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        let mut client = connect(node);
+
+        let events = client
+            .request::<Events>(EventsParams {
+                handle: clone.handle,
+                limit: 2,
+            })
+            .await
+            .unwrap()
+            .events;
+        let unknown = client
+            .request::<Events>(EventsParams {
+                handle: Handle::new(2),
+                limit: 2,
+            })
+            .await;
+
+        let hooks: Vec<&str> = events.iter().map(|event| event.hook.as_str()).collect();
+        assert_eq!(hooks, ["PreToolUse", "Stop"]);
+        assert!(
+            matches!(
+                unknown,
+                Err(ClientError::Method(EventsError::UnknownClone { handle })) if handle == Handle::new(2)
+            ),
+            "{unknown:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_takes_a_blocked_clone_for_a_running_one() {
+        let dir = TempDir::new().unwrap();
+        let node = open_node(&dir).await;
+        let blocked = with_clone(&node, State::Blocked).await;
+        let mut client = connect(node);
+
+        let result = client
+            .request::<Stop>(HandleParams {
+                handle: blocked.handle,
+            })
+            .await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(ClientError::Rpc(error))
+                    if error.data == Some(serde_json::json!("clone CT-0001 is blocked, but this daemon runs no process for it"))
+            ),
+            "{result:?}"
         );
     }
 

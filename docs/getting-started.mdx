@@ -120,7 +120,7 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
    CT-0001  cloneyard  personal  headless  done
    ```
 
-   A clone is `working` until Claude Code's answer ends its turn, then `done`, or `error` with the reason. One that is still working when the daemon stops ends `error`.
+   A clone is `working` until Claude Code's answer ends its turn, then `done`, or `error` with the reason. While it runs, its [hooks](/cloneyard/hook-events) can make it `blocked` or `idle`. One that is still running when the daemon stops ends `error`.
 
 10. Show a clone, by its handle or as `ct-1`:
 
@@ -139,9 +139,15 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
     branch    cloneyard/ct-0001
     checkout  /home/you/.local/share/cloneyard/clones/01M8F3K2Q9V7T4R6N5X1C0B8ZD/checkout
     session   5f0c8d2e-7b1a-4c3e-9d6f-2a8b4e1c7d90
+    event     SessionStart      12s ago
+    event     UserPromptSubmit  12s ago
+    event     Stop              9s ago
+    event     SessionEnd        9s ago
     ```
 
-    `cy clone stop CT-0001` ends a clone that is still working and prints `stopped CT-0001`.
+    The last lines are the clone's last 10 hook events, each with its tool, if it has one, and its age.
+
+    `cy clone stop CT-0001` ends a clone that is still running and prints `stopped CT-0001`.
 
     <Aside type="caution">
     Don't run git or an IDE in a clone's checkout: its `.git`, with its config and hooks, belongs to the clone.
