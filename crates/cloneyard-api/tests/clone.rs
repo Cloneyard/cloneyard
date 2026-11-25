@@ -1,6 +1,7 @@
 use cloneyard_api::MethodError;
 use cloneyard_api::clone::{
-    Clone, Handle, HandleParams, Mode, RunError, Session, State, StopError,
+    Clone, EventsError, EventsResult, Handle, HandleParams, HookEvent, Mode, RunError, Session,
+    State, StopError,
 };
 use regex::Regex;
 use serde_json::{Value, json};
@@ -80,6 +81,7 @@ fn each_clone_error_has_its_own_code_and_its_fields_as_data() {
             state: State::Done,
         }
         .encode(),
+        EventsError::UnknownClone { handle }.encode(),
     ]
     .into_iter()
     .map(|encoded| {
@@ -99,6 +101,7 @@ fn each_clone_error_has_its_own_code_and_its_fields_as_data() {
             ),
             (1202, json!({"handle": "CT-0001"})),
             (1203, json!({"handle": "CT-0001", "state": "done"})),
+            (1202, json!({"handle": "CT-0001"})),
         ]
     );
 }
@@ -197,4 +200,35 @@ fn every_state_goes_on_the_wire_as_it_prints() {
         assert_eq!(json, json!(state.to_string()));
         assert_eq!(serde_json::from_value::<State>(json).unwrap(), state);
     }
+}
+
+#[test]
+fn hook_events_go_on_the_wire_with_their_time_session_hook_and_tool() {
+    let id = Ulid::generate();
+    let result = EventsResult {
+        events: vec![HookEvent {
+            id,
+            at: 1_764_000_000_123,
+            session: "2f6c".to_owned(),
+            hook: "PreToolUse".to_owned(),
+            tool: Some("Bash".to_owned()),
+        }],
+    };
+
+    let json = serde_json::to_value(&result).unwrap();
+
+    assert_eq!(
+        json,
+        json!({"events": [{
+            "id": id.to_string(),
+            "at": 1_764_000_000_123_i64,
+            "session": "2f6c",
+            "hook": "PreToolUse",
+            "tool": "Bash",
+        }]})
+    );
+    assert_eq!(
+        serde_json::from_value::<EventsResult>(json).unwrap(),
+        result
+    );
 }

@@ -1,11 +1,11 @@
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use cloneyard_api::clone::{Clone, Handle, Mode, Session, State};
-use rusqlite::{Connection, Params};
+use rusqlite::{Connection, OptionalExtension as _, Params};
 use serde_json::{Value, json};
 use ulid::Ulid;
 
 use crate::store::{Store, ulid};
-use crate::write::Entity;
+use crate::write::{Changes, Entity};
 
 /// A clone to add, without its handle and its branch, which the node's next handle decides.
 #[derive(Debug, Clone)]
@@ -104,23 +104,19 @@ impl Store {
         .with_context(|| format!("cannot set the state of clone {id}"))
     }
 
-    /// Adds a session with the provider's id `provider_id` to clone `clone_id`.
+    /// Adds a session with the provider's id `provider_id` to clone `clone_id`, unless the clone has it already.
     ///
     /// # Errors
     ///
-    /// When there is no such clone, the session is already known, or the database can't be written.
+    /// When there is no such clone, another clone has the session, or the database can't be written.
     pub async fn add_session(&self, clone_id: Ulid, provider_id: &str) -> anyhow::Result<()> {
         let provider_id = provider_id.to_owned();
-        self.write(move |changes| {
-            changes.insert(
-                Entity::Session,
-                &[
-                    ("id", json!(Ulid::generate())),
-                    ("clone_id", json!(clone_id)),
-                    ("provider_id", json!(provider_id)),
-                ],
-            )
-        })
+        self.write(
+            move |changes| match session(changes, clone_id, &provider_id)? {
+                Ok(_) => Ok(()),
+                Err(owner) => bail!("session {provider_id} belongs to clone {owner}"),
+            },
+        )
         .await
         .with_context(|| format!("cannot add a session to clone {clone_id}"))
     }
@@ -193,6 +189,44 @@ impl Store {
     }
 }
 
+/// The id of session `provider_id` of clone `clone_id`, which it adds when the session is new, or the clone the session belongs to instead.
+pub(crate) fn session(
+    changes: &mut Changes<'_>,
+    clone_id: Ulid,
+    provider_id: &str,
+) -> anyhow::Result<Result<String, Ulid>> {
+    let known: Option<(String, String)> = changes
+        .query_row(
+            "SELECT id, clone_id FROM session WHERE provider_id = ?1",
+            [provider_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((id, owner)) = known {
+        let owner = ulid(&owner)?;
+        return Ok(if owner == clone_id {
+            Ok(id)
+        } else {
+            Err(owner)
+        });
+    }
+    let id = Ulid::generate().to_string();
+    changes.insert(
+        Entity::Session,
+        &[
+            ("id", json!(id)),
+            ("clone_id", json!(clone_id)),
+            ("provider_id", json!(provider_id)),
+        ],
+    )?;
+    Ok(Ok(id))
+}
+
+pub(crate) fn state_of(text: &str) -> anyhow::Result<State> {
+    serde_json::from_value(Value::String(text.to_owned()))
+        .with_context(|| format!("invalid state {text:?}"))
+}
+
 fn read(
     connection: &Connection,
     condition: &str,
@@ -256,13 +290,8 @@ fn mode_of(text: &str) -> anyhow::Result<Mode> {
         .with_context(|| format!("invalid mode {text:?}"))
 }
 
-fn state_of(text: &str) -> anyhow::Result<State> {
-    serde_json::from_value(Value::String(text.to_owned()))
-        .with_context(|| format!("invalid state {text:?}"))
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicI64;
 
@@ -276,14 +305,14 @@ mod tests {
     use crate::Store;
     use crate::store::tests::{Logged, NOW, change_log, open, open_at, sql};
 
-    struct Fixture {
-        node: Ulid,
+    pub(crate) struct Fixture {
+        pub(crate) node: Ulid,
         project: Ulid,
         repo: Ulid,
         account: Ulid,
     }
 
-    async fn fixture(store: &Store) -> Fixture {
+    pub(crate) async fn fixture(store: &Store) -> Fixture {
         let node_id = store.node_id().await.unwrap();
         let project = store
             .add_project(node_id, "app", "app", "/code/app")
@@ -303,7 +332,7 @@ mod tests {
         }
     }
 
-    async fn add(store: &Store, fixture: &Fixture, session: &str) -> Clone {
+    pub(crate) async fn add(store: &Store, fixture: &Fixture, session: &str) -> Clone {
         let id = Ulid::generate();
         let clone = NewClone {
             id,

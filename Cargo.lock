@@ -251,6 +251,7 @@ dependencies = [
  "rusqlite_migration",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "ulid",
 ]

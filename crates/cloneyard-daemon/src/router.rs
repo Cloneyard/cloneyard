@@ -67,9 +67,16 @@ pub(crate) fn router(node: Arc<Node>) -> Router {
                 async move { reply(crate::clone::show(&node, params).await) }
             }
         })
-        .handle::<clone::Stop>(move |params| {
+        .handle::<clone::Stop>({
             let node = Arc::clone(&node);
-            async move { reply(crate::clone::stop(&node, params).await) }
+            move |params| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::clone::stop(&node, params).await) }
+            }
+        })
+        .handle::<clone::Events>(move |params| {
+            let node = Arc::clone(&node);
+            async move { reply(crate::clone::events(&node, params).await) }
         })
         .handle::<Discover>(move |()| future::ready(Ok(document.clone())))
 }

@@ -143,6 +143,55 @@ impl MethodError for StopError {
     const ERRORS: &'static [ErrorCode] = &[UNKNOWN_CLONE, NOT_RUNNING];
 }
 
+pub struct Events;
+
+impl Method for Events {
+    const NAME: &'static str = "clone.events";
+    const SUMMARY: Option<&'static str> = Some("Returns a clone's last hook events, oldest first");
+    type Params = EventsParams;
+    type Result = EventsResult;
+    type Error = EventsError;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EventsParams {
+    pub handle: Handle,
+    /// How many of the newest events to return.
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "CloneEventsResult")]
+pub struct EventsResult {
+    /// Oldest first.
+    pub events: Vec<HookEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, thiserror::Error)]
+pub enum EventsError {
+    #[error("no clone {handle}")]
+    UnknownClone { handle: Handle },
+}
+
+impl MethodError for EventsError {
+    const ERRORS: &'static [ErrorCode] = &[UNKNOWN_CLONE];
+}
+
+/// What one hook of a clone's provider reported, such as a tool call or the end of a turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HookEvent {
+    #[schemars(schema_with = "crate::ulid_schema")]
+    pub id: Ulid,
+    /// When the hook ran, in milliseconds since the Unix epoch.
+    pub at: i64,
+    /// The provider's id of the session it ran in.
+    pub session: String,
+    /// The provider's name of the hook, such as `PreToolUse`.
+    pub hook: String,
+    /// The tool of a tool hook, such as `Bash`.
+    pub tool: Option<String>,
+}
+
 /// A coding agent that Cloneyard runs on an account, in a checkout of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Clone {

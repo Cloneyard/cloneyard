@@ -59,7 +59,8 @@ fn lists_every_method_and_which_of_them_take_params() {
             "clone.run",
             "clone.list",
             "clone.show",
-            "clone.stop"
+            "clone.stop",
+            "clone.events"
         ]
     );
     let with_params: Vec<&Value> = methods
@@ -74,7 +75,8 @@ fn lists_every_method_and_which_of_them_take_params() {
             "account.add",
             "clone.run",
             "clone.show",
-            "clone.stop"
+            "clone.stop",
+            "clone.events"
         ]
     );
 }
@@ -291,6 +293,10 @@ fn lists_the_errors_of_the_clone_methods_with_their_codes_and_fields() {
             ),
         ]
     );
+    assert_eq!(
+        errors("clone.events"),
+        [(json!(1202), json!("No such clone"), json!(["handle"]))]
+    );
 }
 
 #[test]
@@ -356,8 +362,10 @@ fn results_refer_to_shared_schemas_in_components() {
             "Account",
             "AccountListResult",
             "Clone",
+            "CloneEventsResult",
             "CloneListResult",
             "Handle",
+            "HookEvent",
             "ListResult",
             "Mode",
             "PingResult",

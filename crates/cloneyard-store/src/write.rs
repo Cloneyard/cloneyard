@@ -152,6 +152,20 @@ impl Changes<'_> {
         self.log(entity, "upsert", fields)
     }
 
+    /// Adds a row to `table`, which is only appended to and so is its own log, with `fields` as its columns.
+    pub(crate) fn append(&mut self, table: &str, fields: &[(&str, Value)]) -> anyhow::Result<()> {
+        let columns: Vec<&str> = fields.iter().map(|(column, _)| *column).collect();
+        self.transaction.execute(
+            &format!(
+                "INSERT INTO {table} ({}) VALUES ({})",
+                columns.join(", "),
+                vec!["?"; fields.len()].join(", ")
+            ),
+            params_from_iter(fields.iter().map(|(_, value)| column(value))),
+        )?;
+        Ok(())
+    }
+
     /// Sets the columns in `fields` of the row of `entity` whose key columns, also in `fields`, have the given values.
     pub(crate) fn update(
         &mut self,
