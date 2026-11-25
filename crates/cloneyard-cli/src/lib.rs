@@ -94,7 +94,7 @@ enum CloneCommand {
         /// The first message to the clone
         prompt: String,
     },
-    /// Show a clone with its reason, branch, checkout and sessions
+    /// Show a clone with its reason, branch, checkout, sessions and last hook events
     Show {
         /// The clone's handle, such as CT-0042 or ct-42
         handle: Handle,
