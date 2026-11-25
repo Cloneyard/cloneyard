@@ -31,4 +31,4 @@ level = "info" # a tracing filter; RUST_LOG overrides it
 - The arguments and output of `claude`, which live in `cloneyard-provider-claude`.
 - Landlock and seccomp, which live in `cloneyard-sandbox`.
 
-[ADR 0010](../../docs/adr/0010-clone-ids-and-handles.md) explains the ids and handles of clones, [ADR 0011](../../docs/adr/0011-clone-checkout-with-git-clone-shared.md) their checkouts, and [ADR 0012](../../docs/adr/0012-clone-sandbox-of-landlock-and-seccomp.md) their sandbox.
+[ADR 0010](../../docs/adr/0010-clone-ids-and-handles.md) explains the ids and handles of clones, [ADR 0011](../../docs/adr/0011-clone-checkout-with-git-clone-shared.md) their checkouts, [ADR 0012](../../docs/adr/0012-clone-sandbox-of-landlock-and-seccomp.md) their sandbox, and [ADR 0013](../../docs/adr/0013-hook-events-through-a-spool.md) the spool of their hook events.
