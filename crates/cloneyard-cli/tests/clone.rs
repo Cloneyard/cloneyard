@@ -178,12 +178,13 @@ fn the_clone_runs_claude_headless_on_its_session_and_account_in_its_checkout() {
     let session = field(&shown, "session");
     let prompt: serde_json::Value =
         serde_json::from_str(&recorded(&node, &session, "prompt")).unwrap();
+    let cy = fs::canonicalize(env!("CARGO_BIN_EXE_cy")).unwrap();
     assert_eq!(
         recorded(&node, &session, "args"),
         format!(
             "-p\n--input-format\nstream-json\n--output-format\nstream-json\n--verbose\n\
-             --session-id\n{session}\n--permission-prompts\nnone\n\
-             --settings\n{{\"sandbox\":{{\"enabled\":false}}}}\n"
+             --session-id\n{session}\n--permission-prompts\nnone\n--settings\n{}\n",
+            cloneyard_provider_claude::settings(cy.to_str().unwrap(), true)
         )
     );
     assert_eq!(

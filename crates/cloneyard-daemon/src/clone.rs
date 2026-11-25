@@ -10,7 +10,7 @@ use anyhow::{Context as _, bail};
 use cloneyard_api::clone::{
     Clone, HandleParams, ListResult, Mode, RunError, RunParams, ShowError, State, StopError,
 };
-use cloneyard_provider_claude::headless;
+use cloneyard_provider_claude::{self as provider, headless};
 use cloneyard_store::NewClone;
 use tokio::process::Command;
 use ulid::Ulid;
@@ -126,7 +126,8 @@ async fn start(
     make_checkout(repo, checkout, &clone.branch)
         .await
         .map_err(|error| format!("cannot create the checkout: {error:#}"))?;
-    let mut claude = headless::command(account_dir, session_id);
+    let settings = provider::settings(&node.program, !clone.unsandboxed);
+    let mut claude = headless::command(account_dir, session_id, &settings);
     claude.current_dir(checkout);
     let mut command = if clone.unsandboxed {
         claude
@@ -137,7 +138,7 @@ async fn start(
         let policy = sandbox::policy(node, env::home_dir().as_deref(), clone_dir, account_dir)
             .await
             .map_err(|error| format!("cannot sandbox the clone: {error:#}"))?;
-        headless::inside_sandbox(&mut claude);
+        provider::inside_sandbox(&mut claude);
         sandbox::use_caches(&mut claude, &node.data_dir);
         cloneyard_sandbox::command(Path::new(sandbox::ENTER), &policy, claude.as_std())
             .map(Command::from)
