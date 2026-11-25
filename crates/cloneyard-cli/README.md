@@ -9,9 +9,10 @@ The `cloneyard` binary and its short alias `cy`: a thin client of the daemon, an
 - `cy daemon` runs the daemon in the foreground until SIGTERM or Ctrl+C.
 - `cy ping` prints the daemon's version, the node id and the round-trip time of one call.
 - `cy project add <path> [--name <name>]` adds the git repo at the path as a project and prints its name and id; `cy projects` lists the projects with the paths of their repos.
+- `cy hook <event>`, hidden from `--help`, writes the JSON on stdin into the spool that `CLONEYARD_SPOOL` names; Claude Code runs it for each hook of a clone. It prints nothing on stdout and always exits 0, with the reason of a failure on stderr.
 - `cy sandbox <policy> -- <program>`, hidden from `--help`, enters a clone's sandbox and runs the program in it; the daemon starts every clone through it.
 - `cy rpc schema` prints the OpenRPC document that the daemon serves, in the format of `schema/cloneyard.openrpc.json`.
 
 ## Out of scope
 
-- Logic behind the commands: each one calls the daemon's API and prints the answer, or the method's own error with exit code 1. The one exception is the Claude Code login of `cy account add`, which needs your terminal; [ADR 0009](../../docs/adr/0009-account-login-in-the-cli.md) explains it.
+- Logic behind the commands: each one calls the daemon's API and prints the answer, or the method's own error with exit code 1. The exceptions are `cy hook`, which runs inside a clone's sandbox, away from the daemon's socket, and the Claude Code login of `cy account add`, which needs your terminal, as [ADR 0009](../../docs/adr/0009-account-login-in-the-cli.md) explains.
