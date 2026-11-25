@@ -181,3 +181,20 @@ fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
     );
     assert_eq!(serde_json::from_value::<Clone>(json).unwrap(), clone);
 }
+
+#[test]
+fn every_state_goes_on_the_wire_as_it_prints() {
+    for state in [
+        State::Working,
+        State::Blocked,
+        State::Idle,
+        State::Done,
+        State::Error,
+        State::Stopped,
+    ] {
+        let json = serde_json::to_value(state).unwrap();
+
+        assert_eq!(json, json!(state.to_string()));
+        assert_eq!(serde_json::from_value::<State>(json).unwrap(), state);
+    }
+}

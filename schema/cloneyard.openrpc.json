@@ -698,7 +698,17 @@
         "oneOf": [
           {
             "const": "working",
-            "description": "Its process runs.",
+            "description": "It works on its turn.",
+            "type": "string"
+          },
+          {
+            "const": "blocked",
+            "description": "It waits for a permission.",
+            "type": "string"
+          },
+          {
+            "const": "idle",
+            "description": "It ended its turn and waits for a message.",
             "type": "string"
           },
           {

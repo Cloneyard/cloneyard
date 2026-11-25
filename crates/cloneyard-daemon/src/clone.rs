@@ -239,7 +239,7 @@ pub(crate) async fn show(
         .ok_or(ShowError::UnknownClone { handle }))
 }
 
-/// Ends a working clone's processes and gives it back `stopped`.
+/// Ends a running clone's processes and gives it back `stopped`.
 pub(crate) async fn stop(
     node: &Node,
     params: HandleParams,
@@ -248,14 +248,17 @@ pub(crate) async fn stop(
     let Some(clone) = node.store.clone_by_handle(node.id, handle).await? else {
         return Ok(Err(StopError::UnknownClone { handle }));
     };
-    if clone.state != State::Working {
+    if !clone.state.runs() {
         return Ok(Err(StopError::NotRunning {
             handle,
             state: clone.state,
         }));
     }
     if !node.processes.stop(clone.id, GRACE).await {
-        bail!("clone {handle} is working, but this daemon runs no process for it");
+        bail!(
+            "clone {handle} is {}, but this daemon runs no process for it",
+            clone.state
+        );
     }
     node.store
         .clone_by_handle(node.id, handle)
@@ -482,6 +485,29 @@ mod tests {
                     handle: Handle::new(2)
                 },
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_takes_a_blocked_clone_for_a_running_one() {
+        let dir = TempDir::new().unwrap();
+        let node = open_node(&dir).await;
+        let blocked = with_clone(&node, State::Blocked).await;
+        let mut client = connect(node);
+
+        let result = client
+            .request::<Stop>(HandleParams {
+                handle: blocked.handle,
+            })
+            .await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(ClientError::Rpc(error))
+                    if error.data == Some(serde_json::json!("clone CT-0001 is blocked, but this daemon runs no process for it"))
+            ),
+            "{result:?}"
         );
     }
 

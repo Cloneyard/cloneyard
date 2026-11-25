@@ -99,7 +99,7 @@ enum CloneCommand {
         /// The clone's handle, such as CT-0042 or ct-42
         handle: Handle,
     },
-    /// End a working clone's processes
+    /// End a running clone's processes
     Stop {
         /// The clone's handle, such as CT-0042 or ct-42
         handle: Handle,

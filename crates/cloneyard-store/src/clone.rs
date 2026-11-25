@@ -158,7 +158,7 @@ impl Store {
         .with_context(|| format!("cannot read clone {handle}"))
     }
 
-    /// Sets every `working` clone of node `node_id` to `error` with `reason`, and gives their handles.
+    /// Sets every running clone of node `node_id`, one that is `working`, `blocked` or `idle`, to `error` with `reason`, and gives their handles.
     ///
     /// # Errors
     ///
@@ -166,12 +166,14 @@ impl Store {
     pub async fn lose_clones(&self, node_id: Ulid, reason: &str) -> anyhow::Result<Vec<Handle>> {
         let reason = reason.to_owned();
         self.write(move |changes| {
-            let working: Vec<(String, u32)> = changes.query_rows(
-                "SELECT id, handle FROM clone WHERE node_id = ?1 AND state = ?2 ORDER BY handle",
-                (node_id.to_string(), State::Working.to_string()),
+            let [working, blocked, idle] = State::RUNNING.map(|state| state.to_string());
+            let running: Vec<(String, u32)> = changes.query_rows(
+                "SELECT id, handle FROM clone WHERE node_id = ?1 AND state IN (?2, ?3, ?4) \
+                 ORDER BY handle",
+                (node_id.to_string(), working, blocked, idle),
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            for (id, _) in &working {
+            for (id, _) in &running {
                 changes.update(
                     Entity::Clone,
                     &[
@@ -181,7 +183,7 @@ impl Store {
                     ],
                 )?;
             }
-            Ok(working
+            Ok(running
                 .into_iter()
                 .map(|(_, number)| Handle::new(number))
                 .collect())
@@ -559,17 +561,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loses_only_the_working_clones_of_the_node() {
+    async fn loses_only_the_running_clones_of_the_node() {
         let dir = TempDir::new().unwrap();
         let store = open(&dir).await;
         let fixture = fixture(&store).await;
-        let done = add(&store, &fixture, "a").await;
-        let working = add(&store, &fixture, "b").await;
-        add(&store, &fixture, "c").await;
-        store
-            .set_clone_state(done.id, State::Done, None)
-            .await
-            .unwrap();
+        for (session, state) in [
+            ("a", State::Done),
+            ("b", State::Working),
+            ("c", State::Blocked),
+            ("d", State::Idle),
+            ("e", State::Stopped),
+        ] {
+            let clone = add(&store, &fixture, session).await;
+            store.set_clone_state(clone.id, state, None).await.unwrap();
+        }
 
         let lost = store
             .lose_clones(fixture.node, "lost while the daemon was down")
@@ -585,14 +590,16 @@ mod tests {
             .map(|clone| (clone.state, clone.reason))
             .collect();
         let lost_reason = Some("lost while the daemon was down".to_owned());
-        assert_eq!(lost, [working.handle, Handle::new(3)]);
+        assert_eq!(lost, [2, 3, 4].map(Handle::new));
         assert_eq!(other_node, []);
         assert_eq!(
             states,
             [
                 (State::Done, None),
                 (State::Error, lost_reason.clone()),
-                (State::Error, lost_reason)
+                (State::Error, lost_reason.clone()),
+                (State::Error, lost_reason),
+                (State::Stopped, None),
             ]
         );
     }
@@ -604,15 +611,15 @@ mod tests {
         let fixture = fixture(&store).await;
         add(&store, &fixture, "2f6c").await;
         sql(&dir)
-            .execute("UPDATE clone SET state = 'idle'", [])
+            .execute("UPDATE clone SET state = 'paused'", [])
             .unwrap();
 
         let error = store.clones(fixture.node).await.unwrap_err();
 
         assert_eq!(
             format!("{error:#}"),
-            "cannot list the clones: invalid state \"idle\": \
-             unknown variant `idle`, expected one of `working`, `done`, `error`, `stopped`"
+            "cannot list the clones: invalid state \"paused\": unknown variant `paused`, \
+             expected one of `working`, `blocked`, `idle`, `done`, `error`, `stopped`"
         );
     }
 }

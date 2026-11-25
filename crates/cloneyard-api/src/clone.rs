@@ -194,8 +194,12 @@ impl fmt::Display for Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum State {
-    /// Its process runs.
+    /// It works on its turn.
     Working,
+    /// It waits for a permission.
+    Blocked,
+    /// It ended its turn and waits for a message.
+    Idle,
     /// It ended its turn without an error.
     Done,
     /// It failed, or its process ended or was lost before its turn ended.
@@ -204,10 +208,23 @@ pub enum State {
     Stopped,
 }
 
+impl State {
+    /// The states of a clone whose process runs.
+    pub const RUNNING: [Self; 3] = [Self::Working, Self::Blocked, Self::Idle];
+
+    /// Whether the clone's process runs, as it does while it is working, blocked or idle.
+    #[must_use]
+    pub fn runs(self) -> bool {
+        Self::RUNNING.contains(&self)
+    }
+}
+
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad(match self {
             Self::Working => "working",
+            Self::Blocked => "blocked",
+            Self::Idle => "idle",
             Self::Done => "done",
             Self::Error => "error",
             Self::Stopped => "stopped",
