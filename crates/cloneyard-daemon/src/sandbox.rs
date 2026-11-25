@@ -90,7 +90,7 @@ struct Paths {
     writable: Vec<PathBuf>,
 }
 
-/// A clone can't read the secrets in `home`, the data dir, the accounts or the repos of the node, apart from its own directory, its account's and the objects its checkout borrows, and it writes only there, in the caches, `/tmp` and `/dev`.
+/// A clone can't read the secrets in `home`, the data dir, the accounts or the repos of the node, apart from its own directory, its account's, the objects its checkout borrows and the daemon's binary, and it writes only there, in the caches, `/tmp` and `/dev`.
 async fn paths(
     node: &Node,
     home: Option<&Path>,
@@ -117,7 +117,9 @@ async fn paths(
             .flat_map(|project| project.repos)
             .map(|repo| PathBuf::from(repo.path)),
     );
-    let visible = borrowed_objects(&clone_dir.join("checkout"))?;
+    let mut visible = borrowed_objects(&clone_dir.join("checkout"))?;
+    // The hooks run it, and it may sit in the `target/` of a repo that is hidden.
+    visible.push(PathBuf::from(&node.program));
     let writable = vec![
         clone_dir.to_owned(),
         account_dir.to_owned(),
@@ -228,7 +230,13 @@ mod tests {
         ] {
             assert!(hidden.contains(&path), "{path} is not hidden: {hidden:?}");
         }
-        assert_eq!(paths.visible, [PathBuf::from("/code/app/.git/objects")]);
+        assert_eq!(
+            paths.visible,
+            [
+                PathBuf::from("/code/app/.git/objects"),
+                PathBuf::from(&node.program)
+            ]
+        );
         assert_eq!(
             paths.writable,
             [

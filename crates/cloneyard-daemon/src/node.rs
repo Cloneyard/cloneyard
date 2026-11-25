@@ -8,6 +8,7 @@ use ulid::Ulid;
 use crate::paths;
 use crate::process::Processes;
 use crate::sandbox::Sandboxing;
+use crate::spool::{self, Spools};
 
 /// The state of the node that the handlers share: its id, its database, its data dir, how it sandboxes its clones, their processes and the program their hooks run.
 pub(crate) struct Node {
@@ -18,10 +19,11 @@ pub(crate) struct Node {
     pub(crate) processes: Processes,
     /// The daemon's own binary, as `cy hook` writes a clone's hook events.
     pub(crate) program: String,
+    pub(crate) spools: Spools,
 }
 
 impl Node {
-    /// Opens the database in `data_dir` and reads the node id from it, creating both if they are missing, and marks the clones that were working as lost.
+    /// Opens the database in `data_dir` and reads the node id from it, creating both if they are missing, marks the clones that were running as lost and takes the hook events their spools hold; call it inside a tokio runtime.
     pub(crate) async fn open(data_dir: &Path, sandboxing: Sandboxing) -> anyhow::Result<Self> {
         let program = env::current_exe().context("cannot find the daemon's own binary")?;
         let program = program
@@ -40,6 +42,8 @@ impl Node {
                 "clones lost while the daemon was down"
             );
         }
+        spool::pass_all(&store, data_dir).await;
+        let spools = Spools::new()?;
         Ok(Self {
             id,
             store,
@@ -47,6 +51,7 @@ impl Node {
             sandboxing,
             processes: Processes::default(),
             program,
+            spools,
         })
     }
 }

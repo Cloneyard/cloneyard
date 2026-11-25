@@ -13,7 +13,7 @@ cloneyard-provider-claude.workspace = true
 cloneyard-rpc.workspace = true
 cloneyard-sandbox.workspace = true
 cloneyard-store.workspace = true
-rustix = { version = "1.1.6", features = ["process"] }
+rustix = { version = "1.1.6", features = ["fs", "process"] }
 serde.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml.workspace = true

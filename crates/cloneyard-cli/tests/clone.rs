@@ -17,6 +17,7 @@ mkdir -p "$out"
 printf '%s\n' "$@" > "$out/args"
 printf '%s' "$CLAUDE_CONFIG_DIR" > "$out/config-dir"
 printf '%s' "${ANTHROPIC_API_KEY-unset}" > "$out/api-key"
+printf '%s' "${CLONEYARD_SPOOL-unset}" > "$out/spool"
 pwd > "$out/cwd"
 git branch --show-current > "$out/branch"
 echo $$ > "$out/pid"
@@ -25,6 +26,10 @@ printf '%s\n' "$prompt" > "$out/prompt"
 printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$session""#;
 
 const WAIT_FOR_GO: &str = r#"while [ ! -e "$HOME/go" ]; do sleep 0.02; done"#;
+
+/// `hook <event> <fields>` runs `cy hook` as Claude Code does, with the session id and `fields` in the JSON on stdin.
+const HOOK: &str =
+    r#"hook() { printf '{"session_id":"%s"%s}' "$session" "$2" | "$CY" hook "$1"; }"#;
 
 const DONE: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"pong"}'
 cat > /dev/null"#;
@@ -73,10 +78,12 @@ done
     fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// A daemon that finds the fake `claude` first on its `PATH`.
+/// A daemon that finds the fake `claude` first on its `PATH`, which can run `cy` as `$CY`.
 fn start_daemon(node: &Node) -> Daemon {
     let mut daemon = node.cy("daemon");
-    daemon.env("PATH", bin_path(node));
+    daemon
+        .env("PATH", bin_path(node))
+        .env("CY", env!("CARGO_BIN_EXE_cy"));
     node.spawn(daemon)
 }
 
@@ -192,6 +199,10 @@ fn the_clone_runs_claude_headless_on_its_session_and_account_in_its_checkout() {
         claude_dir(&node, "personal").to_str().unwrap()
     );
     assert_eq!(recorded(&node, &session, "api-key"), "unset");
+    assert_eq!(
+        PathBuf::from(recorded(&node, &session, "spool")),
+        Path::new(&field(&shown, "checkout")).with_file_name("spool")
+    );
     assert_eq!(
         recorded(&node, &session, "cwd").trim_end(),
         field(&shown, "checkout")
@@ -545,4 +556,57 @@ fn a_clone_of_a_repo_in_tmp_does_not_start_since_tmp_is_writable_and_names_what_
             home.display()
         )
     );
+}
+
+#[test]
+fn a_clones_state_follows_its_hooks_until_its_result() {
+    let (node, _repo, _daemon) = node_with_project_and_account();
+    fake_headless(
+        &node,
+        &format!(
+            r#"{RECORD}
+{HOOK}
+hook Notification ',"notification_type":"permission_prompt"'
+while [ ! -e "$HOME/answered" ]; do sleep 0.02; done
+hook PostToolUse ',"tool_name":"Bash"'
+hook Stop
+{WAIT_FOR_GO}
+{DONE}"#
+        ),
+    );
+
+    stdout_of_success(&run(&node, "Run the tests"));
+
+    wait_for_state(&node, "CT-0001  app  personal  headless  blocked");
+    fs::write(node.home.path().join("answered"), "").unwrap();
+    wait_for_state(&node, "CT-0001  app  personal  headless  idle");
+    fs::write(node.home.path().join("go"), "").unwrap();
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+}
+
+#[test]
+fn a_clone_cannot_write_into_the_spool_of_another_clone() {
+    let (node, _repo, _daemon) = node_with_project_and_account();
+    fake_headless(&node, &format!("{RECORD}\n{DONE}"));
+    stdout_of_success(&run(&node, "Say pong"));
+    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    let first = Path::new(&field(&show(&node, "CT-0001"), "checkout")).with_file_name("spool");
+    let forged = first.join("00000000000000000001-1-Stop.json");
+    fake_headless(
+        &node,
+        &format!(
+            r#"{RECORD}
+{{ echo '{{}}' > '{}'; }} 2> "$out/spool-error"
+{DONE}"#,
+            forged.display()
+        ),
+    );
+
+    stdout_of_success(&run(&node, "Forge an event"));
+    wait_for_state(&node, "CT-0002  app  personal  headless  done");
+
+    let session = field(&show(&node, "CT-0002"), "session");
+    let error = recorded(&node, &session, "spool-error");
+    assert!(error.contains("Permission denied"), "{error}");
+    assert!(!forged.exists());
 }

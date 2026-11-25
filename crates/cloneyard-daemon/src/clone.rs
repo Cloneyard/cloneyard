@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::node::Node;
 use crate::process::{self, GRACE};
 use crate::sandbox::{self, Sandboxing};
+use crate::spool;
 
 /// Records a `working` clone, makes its checkout and starts it; a clone whose checkout or start fails ends `error`, with the reason.
 pub(crate) async fn run(
@@ -124,18 +125,20 @@ async fn start(
     prompt: String,
 ) -> Result<(), String> {
     let checkout = Path::new(&clone.checkout);
+    let clone_dir = checkout
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", checkout.display()))?;
     make_checkout(repo, checkout, &clone.branch)
         .await
         .map_err(|error| format!("cannot create the checkout: {error:#}"))?;
     let settings = provider::settings(&node.program, !clone.unsandboxed);
     let mut claude = headless::command(account_dir, session_id, &settings);
-    claude.current_dir(checkout);
+    claude
+        .current_dir(checkout)
+        .env(spool::VARIABLE, spool::dir(clone_dir));
     let mut command = if clone.unsandboxed {
         claude
     } else {
-        let clone_dir = checkout
-            .parent()
-            .ok_or_else(|| format!("{} has no parent", checkout.display()))?;
         let policy = sandbox::policy(node, env::home_dir().as_deref(), clone_dir, account_dir)
             .await
             .map_err(|error| format!("cannot sandbox the clone: {error:#}"))?;
@@ -145,13 +148,22 @@ async fn start(
             .map(Command::from)
             .map_err(|error| format!("cannot start claude: {error}"))?
     };
-    let child = command
+    node.spools
+        .watch(clone.id, clone_dir)
+        .map_err(|error| format!("cannot set up the spool: {error:#}"))?;
+    let child = match command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()
-        .map_err(|error| format!("cannot start claude: {error}"))?;
+    {
+        Ok(child) => child,
+        Err(error) => {
+            node.spools.unwatch(&node.store, clone.id).await;
+            return Err(format!("cannot start claude: {error}"));
+        }
+    };
     tracing::info!(handle = %clone.handle, checkout = clone.checkout, "clone started");
     process::watch(
         node,
