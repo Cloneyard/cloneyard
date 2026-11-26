@@ -36,7 +36,8 @@ pub fn run() -> anyhow::Result<()> {
         .context("cannot start the tokio runtime")?
         .block_on(async {
             let shutdown = shutdown_signal()?;
-            let daemon = Daemon::bind(&runtime_dir, &data_dir, sandboxing).await?;
+            let daemon =
+                Daemon::bind(&runtime_dir, &data_dir, sandboxing, config.telemetry.port).await?;
             daemon.serve(shutdown).await
         })
 }

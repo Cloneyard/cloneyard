@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use common::{
-    Daemon, LOG_IN, Node, account_add, bin_path, claude_dir, fake_claude, project_add,
+    Daemon, LOG_IN, NODE_TOML, Node, account_add, bin_path, claude_dir, fake_claude, project_add,
     stderr_of_failure, stdout_of_success, wait_until,
 };
 
@@ -518,7 +518,11 @@ fn with_unsandboxed_in_node_toml_a_clone_runs_without_the_sandbox_and_clones_say
     fake_claude(&node, LOG_IN);
     let config = node.home.path().join("config/cloneyard");
     fs::create_dir_all(&config).unwrap();
-    fs::write(config.join("node.toml"), "unsandboxed = true\n").unwrap();
+    fs::write(
+        config.join("node.toml"),
+        format!("unsandboxed = true\n{NODE_TOML}"),
+    )
+    .unwrap();
     let repo = repo_with_commit(&node.home.path().join("app"));
     let _daemon = start_daemon(&node);
     stdout_of_success(&project_add(&node, &repo));

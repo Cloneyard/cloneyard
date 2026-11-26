@@ -11,7 +11,7 @@ use cloneyard_api::clone::{
     Clone, EventsError, EventsParams, EventsResult, HandleParams, ListResult, Mode, RunError,
     RunParams, ShowError, State, StopError,
 };
-use cloneyard_provider_claude::{self as provider, headless};
+use cloneyard_provider_claude::{self as provider, headless, telemetry};
 use cloneyard_store::NewClone;
 use tokio::process::Command;
 use ulid::Ulid;
@@ -104,6 +104,7 @@ pub(crate) async fn run(
         Ok(()) => Ok(Ok(clone)),
         Err(reason) => {
             tracing::warn!(handle = %clone.handle, reason, "clone did not start");
+            node.tokens.revoke(id);
             node.store
                 .set_clone_state(id, State::Error, Some(reason.clone()))
                 .await?;
@@ -136,6 +137,8 @@ async fn start(
     claude
         .current_dir(checkout)
         .env(spool::VARIABLE, spool::dir(clone_dir));
+    let token = node.tokens.issue(clone.id);
+    telemetry::send_events(&mut claude, node.telemetry_port, &token);
     let mut command = if clone.unsandboxed {
         claude
     } else {
@@ -426,6 +429,7 @@ mod tests {
                 Sandboxing::Unavailable {
                     config_file: PathBuf::from("/home/me/.config/cloneyard/node.toml"),
                 },
+                0,
             )
             .await
             .unwrap(),

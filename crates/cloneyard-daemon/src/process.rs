@@ -137,6 +137,7 @@ pub(crate) fn watch(
                 .unwrap_or_else(|| (State::Error, Some(cut_short(status, stderr.as_deref()))));
             record(&node, id, handle, state, reason).await;
         }
+        node.tokens.revoke(id);
         node.spools.unwatch(&node.store, id).await;
         node.processes.lock().remove(&id);
         // The node goes first, so the daemon can close the database once every clone has ended.

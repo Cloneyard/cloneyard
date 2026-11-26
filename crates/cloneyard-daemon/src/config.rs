@@ -14,6 +14,20 @@ pub struct Config {
     /// Runs clones without the sandbox, also on a kernel without Landlock, where they don't start otherwise.
     pub unsandboxed: bool,
     pub log: Log,
+    pub telemetry: Telemetry,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Telemetry {
+    /// The port on `127.0.0.1` where the daemon receives the telemetry of its clones; 0 takes a free one at each start.
+    pub port: u16,
+}
+
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self { port: 7318 }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
@@ -118,6 +132,18 @@ mod tests {
     fn reads_unsandboxed_and_leaves_it_off_by_default() {
         assert!(load("unsandboxed = true\n").unwrap().unsandboxed);
         assert!(!Config::default().unsandboxed);
+    }
+
+    #[test]
+    fn reads_the_telemetry_port_and_takes_7318_by_default() {
+        assert_eq!(load("[telemetry]\nport = 0\n").unwrap().telemetry.port, 0);
+        assert_eq!(Config::default().telemetry.port, 7318);
+    }
+
+    #[test]
+    fn rejects_a_telemetry_port_out_of_range() {
+        let error = error_of("[telemetry]\nport = 70000\n");
+        assert!(error.contains("line 2"), "{error}");
     }
 
     #[test]
