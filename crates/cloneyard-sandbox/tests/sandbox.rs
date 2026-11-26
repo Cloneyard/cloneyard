@@ -3,10 +3,11 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File};
+use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::fs::symlink;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use cloneyard_sandbox::Policy;
 use rustix::io::{FdFlags, fcntl_setfd};
@@ -60,6 +61,11 @@ fn probe() {
         "fds" => {
             println!("result: {}", open_fds().join(" "));
             return;
+        }
+        "wait" => {
+            println!("result: waiting");
+            io::stdout().flush().unwrap();
+            io::stdin().read_to_end(&mut Vec::new()).map(drop)
         }
         _ => panic!("no probe {what}"),
     };
@@ -242,6 +248,37 @@ fn a_descriptor_the_sandbox_inherited_does_not_reach_the_program() {
     });
 
     assert_eq!(result, "0 1 2");
+}
+
+#[test]
+fn a_sandboxed_process_cannot_read_the_environment_of_one_in_another_sandbox() {
+    let policy = policy(&[], &[], &[]);
+    let mut sibling = Command::new(env::current_exe().unwrap())
+        .args(["--exact", "enter", "--nocapture", "--quiet"])
+        .env(POLICY, serde_json::to_string(&policy).unwrap())
+        .env(PROBE, "wait")
+        .env("CLONEYARD_TEST_SECRET", "token-of-the-sibling")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(sibling.stdout.take().unwrap())
+        .lines()
+        .map(Result::unwrap);
+    let waiting = lines.find(|line| line.starts_with("result: "));
+    let environ = format!("/proc/{}/environ", sibling.id());
+
+    let outside = fs::read(&environ).unwrap();
+    let inside = sandboxed(&policy, &format!("read {environ}"));
+
+    drop(sibling.stdin.take());
+    lines.for_each(drop);
+    sibling.wait().unwrap();
+    assert_eq!(waiting.as_deref(), Some("result: waiting"));
+    assert!(
+        String::from_utf8_lossy(&outside).contains("CLONEYARD_TEST_SECRET=token-of-the-sibling")
+    );
+    assert_eq!(inside, DENIED);
 }
 
 #[test]
