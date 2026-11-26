@@ -67,3 +67,7 @@ _Avoid_: hook, callback, notification
 **Spool**:
 The directory in a clone's own one where its hook events wait for the daemon, a file each, until the daemon records them.
 _Avoid_: queue, inbox, outbox
+
+**Usage**:
+The tokens that a clone or a session took from the model, and their cost, as its provider's telemetry reports them; on a subscription, the cost is an estimate at API prices.
+_Avoid_: consumption, spend, billing
