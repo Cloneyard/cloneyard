@@ -1,0 +1,58 @@
+---
+title: Telemetry
+description: How clones send Claude Code's OpenTelemetry to the daemon, and the tokens and cost that cy clones and cy clone show print from it.
+---
+
+Each clone sends Claude Code's OpenTelemetry events to the daemon, which receives them itself as OTLP/HTTP JSON on `127.0.0.1:7318`, without a collector. A clone sends them with a token of its own, and the daemon refuses an export without the token of a running clone.
+
+## Tokens and cost
+
+```text frame="terminal" title="cy clones"
+CT-0001  cloneyard  personal  headless  done     1.2k in  842 out  61.4k cache  $0.0415
+CT-0002  cloneyard  personal  headless  working     3 in   10 out  34.2k cache  $0.0067
+```
+
+`in` counts the input tokens that no cache served, `out` the output tokens and `cache` the tokens read from and written to the prompt cache. The last column is the cost in US dollars. On a subscription it is Claude Code's estimate at API prices, not what you pay.
+
+`cy clone show` prints the same for each session of the clone:
+
+```text frame="terminal" title="cy clone show CT-0001"
+session   5f0c8d2e-7b1a-4c3e-9d6f-2a8b4e1c7d90
+usage     1.2k in  842 out  61.4k cache  $0.0415
+```
+
+`/clear` in Claude Code starts a new session of the same clone, and `cy clones` adds the sessions up.
+
+## What the daemon keeps
+
+| Event | What it keeps, with the session and the time |
+| --- | --- |
+| `api_request` | the model, the input, output, cache read and cache creation tokens, the cost and the duration |
+| `api_error` | the model, the error, the status code, the attempts and the duration |
+| `tool_result` | the tool, whether it succeeded, the duration, the kind of error and the size of the input and the result in bytes |
+| `tool_decision` | the tool, `accept` or `reject`, and what decided |
+
+Nothing else of an event reaches the database: not your account's e-mail, nor the ids of your account and organization. Claude Code's prompts and tool input stay out of its telemetry, as Cloneyard leaves `OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` off. An export that Claude Code sends again adds nothing.
+
+## The port
+
+When another program holds the port, the daemon doesn't start:
+
+```text frame="terminal" title="cy daemon"
+error: cannot listen on 127.0.0.1:7318, the port of [telemetry] in node.toml: Address already in use (os error 98)
+```
+
+Set another one and start the daemon again; `port = 0` takes a free one at each start.
+
+```toml title="~/.config/cloneyard/node.toml"
+[telemetry]
+port = 7319
+```
+
+## Your own OpenTelemetry
+
+Clones don't inherit the `OTEL_*` variables of the daemon's environment, so your own collector gets none of their events. A repo's `.claude/settings.json` can neither send them elsewhere nor turn them off. Managed settings with an OpenTelemetry endpoint of their own win over Cloneyard's, and then `cy clones` shows no usage.
+
+<Aside type="caution">
+A clone reports the usage of its own sessions, so it can forge it. In the sandbox it can't report for another clone; without the sandbox it can read the other clones' tokens.
+</Aside>
