@@ -593,6 +593,14 @@
           "unsandboxed": {
             "description": "Whether the clone runs without the sandbox: when the node's settings say `unsandboxed = true`, and for every clone started before the sandbox existed.",
             "type": "boolean"
+          },
+          "usage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              }
+            ],
+            "description": "What its sessions took together."
           }
         },
         "required": [
@@ -605,7 +613,8 @@
           "branch",
           "checkout",
           "unsandboxed",
-          "sessions"
+          "sessions",
+          "usage"
         ],
         "type": "object"
       },
@@ -784,11 +793,15 @@
           "provider_id": {
             "description": "The provider's id of the session, such as Claude Code's `session_id`.",
             "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
           }
         },
         "required": [
           "id",
-          "provider_id"
+          "provider_id",
+          "usage"
         ],
         "type": "object"
       },
@@ -825,6 +838,46 @@
             "type": "string"
           }
         ]
+      },
+      "Usage": {
+        "description": "The tokens and the cost of the requests to the model, as the provider's telemetry reports them.",
+        "properties": {
+          "cache_creation_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cache_read_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cost_usd_micros": {
+            "description": "What the provider estimates the requests cost, in millionths of a US dollar; on a subscription, at API prices.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "input_tokens": {
+            "description": "The input tokens that no cache served.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cache_read_tokens",
+          "cache_creation_tokens",
+          "cost_usd_micros"
+        ],
+        "type": "object"
       },
       "VersionResult": {
         "properties": {

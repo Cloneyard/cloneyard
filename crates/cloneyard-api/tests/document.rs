@@ -374,6 +374,7 @@ fn results_refer_to_shared_schemas_in_components() {
             "Repo",
             "Session",
             "State",
+            "Usage",
             "VersionResult"
         ]
     );

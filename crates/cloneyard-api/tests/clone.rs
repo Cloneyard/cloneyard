@@ -1,7 +1,7 @@
 use cloneyard_api::MethodError;
 use cloneyard_api::clone::{
     Clone, EventsError, EventsResult, Handle, HandleParams, HookEvent, Mode, RunError, Session,
-    State, StopError,
+    State, StopError, Usage,
 };
 use regex::Regex;
 use serde_json::{Value, json};
@@ -147,6 +147,13 @@ fn the_clone_errors_name_the_project_account_clone_or_settings() {
 fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
     let id = Ulid::generate();
     let session = Ulid::generate();
+    let usage = Usage {
+        input_tokens: 2,
+        output_tokens: 10,
+        cache_read_tokens: 4848,
+        cache_creation_tokens: 29335,
+        cost_usd_micros: 6704,
+    };
     let clone = Clone {
         id,
         handle: Handle::new(1),
@@ -161,11 +168,20 @@ fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
         sessions: vec![Session {
             id: session,
             provider_id: "2f6c".to_owned(),
+            usage,
         }],
+        usage,
     };
 
     let json = serde_json::to_value(&clone).unwrap();
 
+    let usage_json = json!({
+        "input_tokens": 2,
+        "output_tokens": 10,
+        "cache_read_tokens": 4848,
+        "cache_creation_tokens": 29335,
+        "cost_usd_micros": 6704,
+    });
     assert_eq!(
         json,
         json!({
@@ -179,7 +195,8 @@ fn a_clone_goes_on_the_wire_with_its_handle_mode_and_state_as_text() {
             "branch": "cloneyard/ct-0001",
             "checkout": "/data/clones/x/checkout",
             "unsandboxed": false,
-            "sessions": [{"id": session.to_string(), "provider_id": "2f6c"}]
+            "sessions": [{"id": session.to_string(), "provider_id": "2f6c", "usage": usage_json}],
+            "usage": usage_json,
         })
     );
     assert_eq!(serde_json::from_value::<Clone>(json).unwrap(), clone);
@@ -231,4 +248,20 @@ fn hook_events_go_on_the_wire_with_their_time_session_hook_and_tool() {
         serde_json::from_value::<EventsResult>(json).unwrap(),
         result
     );
+}
+
+#[test]
+fn usages_add_up_field_by_field() {
+    let usage = |tokens: u64| Usage {
+        input_tokens: tokens,
+        output_tokens: tokens * 2,
+        cache_read_tokens: tokens * 3,
+        cache_creation_tokens: tokens * 4,
+        cost_usd_micros: tokens * 5,
+    };
+
+    let total: Usage = [usage(1), usage(10)].into_iter().sum();
+
+    assert_eq!(total, usage(11));
+    assert_eq!([].into_iter().sum::<Usage>(), Usage::default());
 }

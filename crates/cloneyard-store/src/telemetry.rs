@@ -204,7 +204,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use cloneyard_api::clone::Clone;
+    use cloneyard_api::clone::{Clone, Usage};
     use serde_json::{Value, json};
     use tempfile::TempDir;
     use ulid::Ulid;
@@ -459,6 +459,74 @@ mod tests {
             Vec::<Value>::new()
         );
         assert_eq!(change_log(&dir).len(), logged);
+    }
+
+    #[tokio::test]
+    async fn a_session_has_the_usage_of_its_requests_and_a_clone_the_sum_of_its_sessions() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let fixture = fixture(&store).await;
+        let clone = add(&store, &fixture, "first").await;
+        let idle = add(&store, &fixture, "idle").await;
+        store
+            .add_telemetry(
+                clone.id,
+                vec![
+                    request("first", Some("req_1"), 2),
+                    request("first", Some("req_2"), 3),
+                    request("second", Some("req_3"), 5),
+                    api_error("first"),
+                ],
+            )
+            .await
+            .unwrap();
+
+        let shown = store
+            .clone_by_handle(fixture.node, clone.handle)
+            .await
+            .unwrap()
+            .unwrap();
+        let listed = store.clones(fixture.node).await.unwrap();
+
+        let usage = |requests: u64, input_tokens| Usage {
+            input_tokens,
+            output_tokens: 10 * requests,
+            cache_read_tokens: 4848 * requests,
+            cache_creation_tokens: 29335 * requests,
+            cost_usd_micros: 6704 * requests,
+        };
+        let sessions: Vec<Usage> = shown.sessions.iter().map(|session| session.usage).collect();
+        assert_eq!(sessions, [usage(2, 5), usage(1, 5)]);
+        assert_eq!(shown.usage, usage(3, 10));
+        assert_eq!(listed[0], shown);
+        assert_eq!(listed[1].handle, idle.handle);
+        assert_eq!(listed[1].usage, Usage::default());
+        assert_eq!(listed[1].sessions[0].usage, Usage::default());
+    }
+
+    #[tokio::test]
+    async fn a_negative_sum_in_the_database_is_named() {
+        let dir = TempDir::new().unwrap();
+        let store = open(&dir).await;
+        let fixture = fixture(&store).await;
+        let clone = add(&store, &fixture, "first").await;
+        store
+            .add_telemetry(clone.id, vec![request("first", Some("req_1"), 2)])
+            .await
+            .unwrap();
+        sql(&dir)
+            .execute("UPDATE api_request SET input_tokens = -5", [])
+            .unwrap();
+
+        let error = store
+            .clone_by_handle(fixture.node, clone.handle)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "cannot read clone CT-0001: invalid usage -5: number too small to fit in target type"
+        );
     }
 
     #[tokio::test]
