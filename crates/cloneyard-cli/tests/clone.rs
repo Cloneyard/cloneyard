@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
+use std::net::TcpStream;
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -34,6 +35,29 @@ const HOOK: &str =
 
 const DONE: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"pong"}'
 cat > /dev/null"#;
+
+/// Sends one `api_request` of the session, with the account's e-mail, to the endpoint and with the token that Claude Code would take from its variables, and records the endpoint.
+const SEND_TELEMETRY: &str = r#"printf '%s' "$OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" > "$out/endpoint"
+token="${OTEL_EXPORTER_OTLP_HEADERS#Authorization=Bearer }"
+curl --silent --show-error --fail --header "Authorization: Bearer $token" \
+    --header 'Content-Type: application/json' --data-binary @- \
+    "$OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" > "$out/telemetry" 2>&1 <<JSON
+{"resourceLogs": [{"scopeLogs": [{"logRecords": [{
+    "timeUnixNano": "1795674808269000000",
+    "body": {"stringValue": "claude_code.api_request"},
+    "attributes": [
+        {"key": "event.name", "value": {"stringValue": "api_request"}},
+        {"key": "session.id", "value": {"stringValue": "$session"}},
+        {"key": "user.email", "value": {"stringValue": "ada@example.com"}},
+        {"key": "request_id", "value": {"stringValue": "req_011"}},
+        {"key": "input_tokens", "value": {"intValue": 2}},
+        {"key": "output_tokens", "value": {"intValue": 10}},
+        {"key": "cache_read_tokens", "value": {"intValue": 4848}},
+        {"key": "cache_creation_tokens", "value": {"intValue": 29335}},
+        {"key": "cost_usd_micros", "value": {"intValue": 6704}}
+    ]
+}]}]}]}
+JSON"#;
 
 /// A git repo at `path` with one commit, given as its canonical path.
 fn repo_with_commit(path: &Path) -> PathBuf {
@@ -156,12 +180,21 @@ fn clone_run_prints_the_handle_and_clones_shows_it_working_then_done_after_a_res
     let stdout = stdout_of_success(&run(&node, "Say pong"));
 
     assert_eq!(stdout, "CT-0001\n");
-    wait_for_state(&node, "CT-0001  app  personal  headless  working");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  working  0 in  0 out  0 cache  $0.0000",
+    );
     fs::write(node.home.path().join("go"), "").unwrap();
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
     daemon.terminate();
     let _daemon = start_daemon(&node);
-    assert_eq!(clones(&node), "CT-0001  app  personal  headless  done\n");
+    assert_eq!(
+        clones(&node),
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000\n"
+    );
     assert_eq!(stdout_of_success(&run(&node, "Again")), "CT-0002\n");
 }
 
@@ -180,7 +213,10 @@ fn the_clone_runs_claude_headless_on_its_session_and_account_in_its_checkout() {
     fake_headless(&node, &format!("{RECORD}\n{DONE}"));
 
     stdout_of_success(&run(&node, "Say pong"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 
     let shown = show(&node, "ct-1");
     let session = field(&shown, "session");
@@ -221,7 +257,10 @@ fn clone_show_lists_the_clone_with_its_checkout_and_session() {
     let (node, _repo, _daemon) = node_with_project_and_account();
     fake_headless(&node, &format!("{RECORD}\n{DONE}"));
     stdout_of_success(&run(&node, "Say pong"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 
     let shown = show(&node, "CT-0001");
 
@@ -231,10 +270,11 @@ fn clone_show_lists_the_clone_with_its_checkout_and_session() {
         keys,
         [
             "handle", "id", "project", "account", "mode", "state", "sandbox", "branch", "checkout",
-            "session"
+            "session", "usage"
         ]
     );
     assert_eq!(field(&shown, "handle"), "CT-0001");
+    assert_eq!(field(&shown, "usage"), "0 in  0 out  0 cache  $0.0000");
     assert_eq!(field(&shown, "state"), "done");
     assert_eq!(field(&shown, "sandbox"), "on");
     assert_eq!(
@@ -263,7 +303,10 @@ fn a_commit_the_clone_makes_stays_in_its_checkout() {
     );
 
     stdout_of_success(&run(&node, "Commit something"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 
     let checkout = PathBuf::from(field(&show(&node, "CT-0001"), "checkout"));
     let commit = git(&checkout, &["rev-parse", "HEAD"]);
@@ -297,11 +340,17 @@ fn a_clone_whose_result_is_an_error_or_that_ends_without_one_is_error_with_the_r
         ),
     );
     stdout_of_success(&run(&node, "Say pong"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  error");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  error  0 in  0 out  0 cache  $0.0000",
+    );
     fake_headless(&node, "echo 'Not logged in' >&2\nexit 1");
 
     stdout_of_success(&run(&node, "Say pong"));
-    wait_for_state(&node, "CT-0002  app  personal  headless  error");
+    wait_for_state(
+        &node,
+        "CT-0002  app  personal  headless  error  0 in  0 out  0 cache  $0.0000",
+    );
 
     assert_eq!(
         field(&show(&node, "CT-0001"), "reason"),
@@ -328,7 +377,10 @@ fn clone_stop_ends_a_working_clone_with_its_children_and_refuses_one_that_is_not
     let again = stderr_of_failure(&node.cy("clone").args(["stop", "CT-0001"]).output().unwrap());
 
     assert_eq!(stopped, "stopped CT-0001\n");
-    assert_eq!(clones(&node), "CT-0001  app  personal  headless  stopped\n");
+    assert_eq!(
+        clones(&node),
+        "CT-0001  app  personal  headless  stopped  0 in  0 out  0 cache  $0.0000\n"
+    );
     assert_eq!(again, "error: clone CT-0001 is stopped, not running\n");
     wait_for_gone(&child);
     wait_for_gone(&recorded(&node, &session, "pid"));
@@ -347,7 +399,10 @@ fn the_daemon_ends_its_clones_on_sigterm_and_they_are_error_after_the_restart() 
 
     assert!(status.success(), "{status:?}");
     wait_for_gone(&pid);
-    assert_eq!(clones(&node), "CT-0001  app  personal  headless  error\n");
+    assert_eq!(
+        clones(&node),
+        "CT-0001  app  personal  headless  error  0 in  0 out  0 cache  $0.0000\n"
+    );
     assert_eq!(
         field(&show(&node, "CT-0001"), "reason"),
         "the daemon stopped"
@@ -366,7 +421,10 @@ fn a_clone_lost_when_the_daemon_is_killed_is_error_once_the_daemon_starts_again(
     daemon.0.wait().unwrap();
     let _daemon = start_daemon(&node);
 
-    assert_eq!(clones(&node), "CT-0001  app  personal  headless  error\n");
+    assert_eq!(
+        clones(&node),
+        "CT-0001  app  personal  headless  error  0 in  0 out  0 cache  $0.0000\n"
+    );
     assert_eq!(
         field(&show(&node, "CT-0001"), "reason"),
         "lost while the daemon was down"
@@ -433,7 +491,10 @@ fn clone_run_prints_the_handle_and_fails_with_the_reason_when_claude_does_not_st
         "error: clone CT-0001 did not start: cannot start claude: \
          No such file or directory (os error 2)\n"
     );
-    assert_eq!(clones(&node), "CT-0001  app  personal  headless  error\n");
+    assert_eq!(
+        clones(&node),
+        "CT-0001  app  personal  headless  error  0 in  0 out  0 cache  $0.0000\n"
+    );
 }
 
 #[test]
@@ -460,7 +521,10 @@ git log -1 --format=%s > "$out/commit"
     );
 
     stdout_of_success(&run(&node, "Print the secrets"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 
     let session = field(&show(&node, "CT-0001"), "session");
     assert_eq!(recorded(&node, &session, "commit"), "build\n");
@@ -497,7 +561,10 @@ echo $? > "$out/push"
     );
 
     stdout_of_success(&run(&node, "Break out"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 
     let session = field(&show(&node, "CT-0001"), "session");
     let ping = recorded(&node, &session, "ping-error");
@@ -534,7 +601,10 @@ fn with_unsandboxed_in_node_toml_a_clone_runs_without_the_sandbox_and_clones_say
 
     stdout_of_success(&run(&node, "Say pong"));
 
-    wait_for_state(&node, "CT-0001  app  personal  headless  done  unsandboxed");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000  unsandboxed",
+    );
     assert!(node.home.path().join("outside").exists());
     assert_eq!(field(&show(&node, "CT-0001"), "sandbox"), "off");
 }
@@ -582,11 +652,20 @@ hook Stop
 
     stdout_of_success(&run(&node, "Run the tests"));
 
-    wait_for_state(&node, "CT-0001  app  personal  headless  blocked");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  blocked  0 in  0 out  0 cache  $0.0000",
+    );
     fs::write(node.home.path().join("answered"), "").unwrap();
-    wait_for_state(&node, "CT-0001  app  personal  headless  idle");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  idle  0 in  0 out  0 cache  $0.0000",
+    );
     fs::write(node.home.path().join("go"), "").unwrap();
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 }
 
 #[test]
@@ -594,7 +673,10 @@ fn a_clone_cannot_write_into_the_spool_of_another_clone() {
     let (node, _repo, _daemon) = node_with_project_and_account();
     fake_headless(&node, &format!("{RECORD}\n{DONE}"));
     stdout_of_success(&run(&node, "Say pong"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
     let first = Path::new(&field(&show(&node, "CT-0001"), "checkout")).with_file_name("spool");
     let forged = first.join("00000000000000000001-1-Stop.json");
     fake_headless(
@@ -608,7 +690,10 @@ fn a_clone_cannot_write_into_the_spool_of_another_clone() {
     );
 
     stdout_of_success(&run(&node, "Forge an event"));
-    wait_for_state(&node, "CT-0002  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0002  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 
     let session = field(&show(&node, "CT-0002"), "session");
     let error = recorded(&node, &session, "spool-error");
@@ -647,7 +732,10 @@ hook Stop
     );
 
     stdout_of_success(&run(&node, "Run the tests"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
 
     let expected = [
         "SessionStart",
@@ -664,7 +752,10 @@ fn events_written_while_the_daemon_is_stopped_show_up_after_it_starts_and_leave_
     let (node, _repo, daemon) = node_with_project_and_account();
     fake_headless(&node, &format!("{RECORD}\n{DONE}"));
     stdout_of_success(&run(&node, "Say pong"));
-    wait_for_state(&node, "CT-0001  app  personal  headless  done");
+    wait_for_state(
+        &node,
+        "CT-0001  app  personal  headless  done  0 in  0 out  0 cache  $0.0000",
+    );
     let shown = show(&node, "CT-0001");
     let session = field(&shown, "session");
     let spool = Path::new(&field(&shown, "checkout")).with_file_name("spool");
@@ -696,4 +787,61 @@ fn events_written_while_the_daemon_is_stopped_show_up_after_it_starts_and_leave_
         ["PreToolUse Read", "PostToolUse Read", "SessionEnd"]
     );
     assert_eq!(fs::read_dir(&spool).unwrap().count(), 0);
+}
+
+#[test]
+fn clones_shows_the_tokens_and_cost_a_clone_sent_also_after_a_restart_and_stores_no_email() {
+    let (node, _repo, daemon) = node_with_project_and_account();
+    fake_headless(&node, &format!("{RECORD}\n{SEND_TELEMETRY}\n{DONE}"));
+    let used = "CT-0001  app  personal  headless  done  2 in  10 out  34.2k cache  $0.0067";
+
+    stdout_of_success(&run(&node, "Say pong"));
+
+    wait_for_state(&node, used);
+    let shown = show(&node, "CT-0001");
+    let session = field(&shown, "session");
+    assert_eq!(recorded(&node, &session, "telemetry"), "{}");
+    assert_eq!(field(&shown, "usage"), "2 in  10 out  34.2k cache  $0.0067");
+    let endpoint = recorded(&node, &session, "endpoint");
+    let address = endpoint
+        .strip_prefix("http://")
+        .and_then(|rest| rest.strip_suffix("/v1/logs"))
+        .unwrap_or_else(|| panic!("endpoint {endpoint}"));
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .write_all(
+            b"POST /v1/logs HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+              Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        )
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 401 "), "{response}");
+    daemon.terminate();
+    let _daemon = start_daemon(&node);
+    assert_eq!(clones(&node), format!("{used}\n"));
+    let data_dir = node.home.path().join("data/cloneyard");
+    let databases: Vec<PathBuf> = fs::read_dir(&data_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("cloneyard.db"))
+        })
+        .collect();
+    assert!(
+        !databases.is_empty(),
+        "no database in {}",
+        data_dir.display()
+    );
+    for database in databases {
+        let bytes = fs::read(&database).unwrap();
+        let email = b"ada@example.com";
+        assert!(
+            !bytes.windows(email.len()).any(|window| window == email),
+            "{}",
+            database.display()
+        );
+    }
 }
