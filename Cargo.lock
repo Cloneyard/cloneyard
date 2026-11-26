@@ -207,6 +207,7 @@ dependencies = [
 name = "cloneyard-provider-claude"
 version = "0.0.1"
 dependencies = [
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",
