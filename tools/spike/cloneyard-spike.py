@@ -330,7 +330,8 @@ class OtelReceiver:
                     data = json.loads(body)
                 except ValueError:
                     data = None
-                item = {"t": time.time(), "path": self.path, "ctype": ctype, "bytes": len(body), "data": data}
+                item = {"t": time.time(), "path": self.path, "ctype": ctype, "bytes": len(body),
+                        "auth": self.headers.get("Authorization"), "data": data}
                 with rec.lock:
                     rec.posts.append(item)
                     with open(rec.path, "a") as f:
@@ -401,6 +402,9 @@ class OtelReceiver:
 
     def count(self, suffix):
         return sum(1 for p in self._snapshot() if p["path"].endswith(suffix))
+
+    def posts_to(self, suffix):
+        return [p for p in self._snapshot() if p["path"].endswith(suffix)]
 
     def non_json(self):
         return [p["ctype"] for p in self._snapshot() if p["data"] is None]
@@ -1572,6 +1576,76 @@ def t_hooks_off(ctx, r):
     return r.finish()
 
 
+def t_telemetry(ctx, r):
+    repo = ctx.repo("telemetry")
+    claude_dir = repo / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    recv = OtelReceiver(ctx.out / "telemetry-otel.jsonl")
+    elsewhere = OtelReceiver(ctx.out / "telemetry-elsewhere.jsonl")
+    (claude_dir / "settings.json").write_text(json.dumps({"env": {
+        "OTEL_LOGS_EXPORTER": "none",
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": f"http://127.0.0.1:{elsewhere.port}/v1/logs",
+    }}))
+    token = uuid.uuid4().hex
+    env = {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_TRACES_EXPORTER": "none",
+        "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/json",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": f"http://127.0.0.1:{recv.port}/v1/logs",
+        "OTEL_EXPORTER_OTLP_HEADERS": f"Authorization=Bearer {token}",
+        "OTEL_LOGS_EXPORT_INTERVAL": "1000",
+    }
+    cmd = [ctx.claude, "-p", "Use the Bash tool to run exactly: echo cy-spike-ok. Then reply with only the command output.",
+           "--model", ctx.model, "--output-format", "json", "--tools", "Bash", "--allowedTools", "Bash(echo *)",
+           "--permission-prompts", "none"]
+    try:
+        rc, out, err, _ = run(cmd, env=ctx.env(env), cwd=repo, timeout=ctx.args.timeout)
+        # Read at once: what arrives after the exit would be lost with the clone.
+        posts = recv.posts_to("/v1/logs")
+        evs = recv.events()
+    finally:
+        recv.stop()
+        elsewhere.stop()
+    r.data["result"] = {"rc": rc, "stderr": tail(err, 400)}
+    r.check("claude -p ran", rc == 0, tail(err, 400))
+    r.data["content_types"] = sorted({p["ctype"] for p in posts})
+    r.check("logs arrive as JSON at the per-signal endpoint despite the checkout's settings that turn them off",
+            bool(posts) and all(p["ctype"].startswith("application/json") for p in posts),
+            f"posts={len(posts)} types={r.data['content_types']}")
+    r.check("the checkout's settings send nothing to an endpoint of their own", not elsewhere.posts_to("/v1/logs"),
+            f"{len(elsewhere.posts_to('/v1/logs'))} posts")
+    r.check("every post carries the Authorization header", bool(posts) and all(p["auth"] == f"Bearer {token}" for p in posts),
+            f"{sum(p['auth'] == f'Bearer {token}' for p in posts)} of {len(posts)}")
+    by_name = {}
+    for name, attrs in evs:
+        by_name.setdefault((name or "").removeprefix("claude_code."), []).append(attrs)
+    r.data["otel_events"] = sorted(by_name)
+    requests = by_name.get("api_request", [])
+    r.check("api_request arrives before claude -p exits", bool(requests), f"events={sorted(by_name)}")
+    needed = {"session.id", "request_id", "cost_usd_micros", "input_tokens", "output_tokens",
+              "cache_read_tokens", "cache_creation_tokens"}
+    missing = sorted({k for a in requests for k in needed - a.keys()})
+    r.check("api_request has the session, request_id, cost_usd_micros and the token counts", bool(requests) and not missing,
+            f"missing {missing}")
+    for name in ("tool_result", "tool_decision"):
+        got = by_name.get(name, [])
+        r.check(f"{name} has tool_use_id", bool(got) and all("tool_use_id" in a for a in got), f"{len(got)} events")
+    try:
+        total = json.loads(out).get("total_cost_usd")
+    except ValueError:
+        total = None
+    summed = sum(int(a.get("cost_usd_micros", 0)) for a in requests) / 1_000_000
+    r.data["cost"] = {"total_cost_usd": total, "sum_of_cost_usd_micros": summed}
+    r.check("the cost of the api_request events adds up to the result's total_cost_usd",
+            total is not None and abs(summed - total) <= 1e-6 * len(requests), f"{summed} vs {total}", critical=False)
+    r.check("records carry user.email, which Cloneyard must not store", any("user.email" in a for _, a in evs),
+            "absent: logged in without OAuth?", critical=False)
+    return r.finish()
+
+
 def t_cc_sandbox_inside(ctx, r):
     abi = landlock_abi()
     if not abi or abi < 1 or platform.machine() not in SECCOMP_ARCH:
@@ -1694,6 +1768,9 @@ TESTS = [
     ("sandbox_claude", t_sandbox_claude, True, False, "claude -p and its hooks under Landlock and seccomp with a clone's write list"),
     ("hooks_off", t_hooks_off, True, False,
      "a checkout's disableAllHooks doesn't turn off the hooks of --settings that say false"),
+    ("telemetry", t_telemetry, True, False,
+     "OTLP/HTTP JSON logs with a clone's exporter variables and token, the last batch before exit, request_id, "
+     "tool_use_id and cost_usd_micros; a checkout's settings neither turn them off nor send them elsewhere"),
     ("cc_sandbox_inside", t_cc_sandbox_inside, True, False,
      "native CC sandbox inside Landlock and seccomp: what Bash does when bwrap can't start"),
     ("remote_control", t_remote_control, True, True, "--remote-control prints a claude.ai/code URL (opt-in: --with-rc)"),
