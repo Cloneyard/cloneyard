@@ -314,7 +314,7 @@ fn parse_name(name: &str) -> Option<(i64, &str)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs::{self, File};
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -332,7 +332,7 @@ mod tests {
     use crate::router::tests::open_node;
 
     /// A working clone whose directory is `clones/<id>` in the node's data dir, on session `session`.
-    async fn add_clone(node: &Node, data_dir: &Path, session: &str) -> (Clone, PathBuf) {
+    pub(crate) async fn add_clone(node: &Node, data_dir: &Path, session: &str) -> (Clone, PathBuf) {
         let projects = node.store.projects(node.id).await.unwrap();
         let project = match projects.into_iter().next() {
             Some(project) => project,

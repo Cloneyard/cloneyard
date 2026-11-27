@@ -117,10 +117,10 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
    ```
 
    ```text frame="terminal" title="cy clones"
-   CT-0001  cloneyard  personal  headless  done
+   CT-0001  cloneyard  personal  headless  done  3 in  12 out  27.9k cache  $0.0342
    ```
 
-   A clone is `working` until Claude Code's answer ends its turn, then `done`, or `error` with the reason. While it runs, its [hooks](/cloneyard/hook-events) can make it `blocked` or `idle`. One that is still running when the daemon stops ends `error`.
+   A clone is `working` until Claude Code's answer ends its turn, then `done`, or `error` with the reason. While it runs, its [hooks](/cloneyard/hook-events) can make it `blocked` or `idle`. One that is still running when the daemon stops ends `error`. The last columns are the tokens and the cost that its [telemetry](/cloneyard/telemetry) reports.
 
 10. Show a clone, by its handle or as `ct-1`:
 
@@ -139,6 +139,7 @@ Without an absolute `XDG_RUNTIME_DIR`, both `cy daemon` and `cy ping` stop with 
     branch    cloneyard/ct-0001
     checkout  /home/you/.local/share/cloneyard/clones/01M8F3K2Q9V7T4R6N5X1C0B8ZD/checkout
     session   5f0c8d2e-7b1a-4c3e-9d6f-2a8b4e1c7d90
+    usage     3 in  12 out  27.9k cache  $0.0342
     event     SessionStart      12s ago
     event     UserPromptSubmit  12s ago
     event     Stop              9s ago

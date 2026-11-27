@@ -9,19 +9,25 @@ use tokio::process::Command;
 
 pub mod headless;
 pub mod hook;
+pub mod telemetry;
 
-/// `claude` with `dir` as its config directory, without the variables that would log it in some other way or tie it to a surrounding session.
+/// `claude` with `dir` as its config directory, without the variables that would log it in some other way, tie it to a surrounding session or send its telemetry elsewhere.
 #[must_use]
 pub fn command(dir: &Path) -> Command {
     let mut claude = Command::new("claude");
     for (name, _) in std::env::vars_os() {
-        let bytes = name.as_bytes();
-        if bytes.starts_with(b"ANTHROPIC_") || bytes.starts_with(b"CLAUDE") {
+        if foreign(&name) {
             claude.env_remove(&name);
         }
     }
     claude.env(OsStr::new("CLAUDE_CONFIG_DIR"), dir);
     claude
+}
+
+/// Whether `claude` must not inherit the variable `name`.
+fn foreign(name: &OsStr) -> bool {
+    let bytes = name.as_bytes();
+    bytes.starts_with(b"ANTHROPIC_") || bytes.starts_with(b"CLAUDE") || bytes.starts_with(b"OTEL_")
 }
 
 /// The `--settings` of a clone: hooks that run `program hook <event>`, which no settings file in the checkout can turn off, and, `inside_sandbox`, Claude Code's own sandbox off, as its `bwrap` can't start inside Cloneyard's.
@@ -46,7 +52,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{command, inside_sandbox, settings};
+    use super::{command, foreign, inside_sandbox, settings};
 
     #[test]
     fn the_command_has_the_account_directory_as_its_config_directory() {
@@ -61,6 +67,22 @@ mod tests {
             config_dir,
             Some(OsStr::new("/data/accounts/personal/claude"))
         );
+    }
+
+    #[test]
+    fn claude_inherits_no_login_session_or_telemetry_variable() {
+        let dropped = [
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CONFIG_DIR",
+            "CLAUDECODE",
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_LOGS_EXPORTER",
+            "PATH",
+            "NO_PROXY",
+        ]
+        .map(|name| foreign(OsStr::new(name)));
+
+        assert_eq!(dropped, [true, true, true, true, true, false, false]);
     }
 
     #[test]

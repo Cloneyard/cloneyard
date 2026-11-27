@@ -17,12 +17,19 @@ pub struct Node {
     pub home: TempDir,
 }
 
+/// The `node.toml` of a test node, whose daemon takes a free telemetry port, as tests run side by side.
+pub const NODE_TOML: &str = "[telemetry]\nport = 0\n";
+
 impl Node {
     pub fn new() -> Self {
-        Self {
+        let node = Self {
             // A clone writes in /tmp, so a repo there couldn't be hidden from it.
             home: TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap(),
-        }
+        };
+        let config = node.home.path().join("config").join("cloneyard");
+        fs::create_dir_all(&config).unwrap();
+        fs::write(config.join("node.toml"), NODE_TOML).unwrap();
+        node
     }
 
     pub fn cy(&self, subcommand: &str) -> Command {

@@ -214,6 +214,8 @@ pub struct Clone {
     pub unsandboxed: bool,
     /// In the order they started.
     pub sessions: Vec<Session>,
+    /// What its sessions took together.
+    pub usage: Usage,
 }
 
 /// One provider session of a clone.
@@ -223,6 +225,39 @@ pub struct Session {
     pub id: Ulid,
     /// The provider's id of the session, such as Claude Code's `session_id`.
     pub provider_id: String,
+    pub usage: Usage,
+}
+
+/// The tokens and the cost of the requests to the model, as the provider's telemetry reports them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Usage {
+    /// The input tokens that no cache served.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    /// What the provider estimates the requests cost, in millionths of a US dollar; on a subscription, at API prices.
+    pub cost_usd_micros: u64,
+}
+
+impl std::ops::Add for Usage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens + other.input_tokens,
+            output_tokens: self.output_tokens + other.output_tokens,
+            cache_read_tokens: self.cache_read_tokens + other.cache_read_tokens,
+            cache_creation_tokens: self.cache_creation_tokens + other.cache_creation_tokens,
+            cost_usd_micros: self.cost_usd_micros + other.cost_usd_micros,
+        }
+    }
+}
+
+impl std::iter::Sum for Usage {
+    fn sum<I: Iterator<Item = Self>>(usages: I) -> Self {
+        usages.fold(Self::default(), std::ops::Add::add)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

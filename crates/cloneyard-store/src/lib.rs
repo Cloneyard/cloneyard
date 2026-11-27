@@ -4,8 +4,10 @@ mod clone;
 mod hook;
 mod schema;
 mod store;
+mod telemetry;
 mod write;
 
 pub use clone::NewClone;
 pub use hook::{NewHookEvent, Refused};
 pub use store::Store;
+pub use telemetry::{ApiError, ApiRequest, NewTelemetry, TelemetryEvent, ToolDecision, ToolResult};

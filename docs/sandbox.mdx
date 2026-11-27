@@ -40,7 +40,7 @@ A repo inside `/tmp` can't be hidden from a clone, so a clone of it ends `error`
 ## What a clone still sees
 
 - its account's Claude Code login, which Claude Code needs
-- the daemon's environment, except `ANTHROPIC_*` and `CLAUDE*`
+- the daemon's environment, except `ANTHROPIC_*`, `CLAUDE*` and `OTEL_*`
 - the files other processes keep in `/tmp`
 
 Claude Code's own sandbox is off in clones, since its `bwrap` needs to mount, which Landlock forbids. A clone runs `claude` with `--settings '{"sandbox":{"enabled":false}}'` and `DISABLE_AUTOUPDATER=1`.
@@ -66,6 +66,6 @@ unsandboxed = true
 `cy clones` marks each clone that runs without the sandbox, like those that started before Cloneyard had one:
 
 ```text frame="terminal" title="cy clones"
-CT-0001  cloneyard  personal  headless  done     unsandboxed
-CT-0002  cloneyard  personal  headless  working
+CT-0001  cloneyard  personal  headless  done     1.2k in  842 out  61.4k cache  $0.0415  unsandboxed
+CT-0002  cloneyard  personal  headless  working     3 in   10 out  34.2k cache  $0.0067
 ```

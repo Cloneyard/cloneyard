@@ -1,5 +1,5 @@
 use anyhow::{Context as _, bail};
-use cloneyard_api::clone::{Clone, Handle, Mode, Session, State};
+use cloneyard_api::clone::{Clone, Handle, Mode, Session, State, Usage};
 use rusqlite::{Connection, OptionalExtension as _, Params};
 use serde_json::{Value, json};
 use ulid::Ulid;
@@ -253,21 +253,42 @@ fn read(
             row.get::<_, bool>(9)?,
         ))
     })?;
-    let mut sessions = connection
-        .prepare("SELECT id, provider_id FROM session WHERE clone_id = ?1 ORDER BY rowid")?;
+    let mut sessions = connection.prepare(
+        "SELECT session.id, session.provider_id, \
+         COALESCE(SUM(api_request.input_tokens), 0), COALESCE(SUM(api_request.output_tokens), 0), \
+         COALESCE(SUM(api_request.cache_read_tokens), 0), \
+         COALESCE(SUM(api_request.cache_creation_tokens), 0), \
+         COALESCE(SUM(api_request.cost_usd_micros), 0) FROM session \
+         LEFT JOIN api_request ON api_request.session_id = session.id \
+         WHERE session.clone_id = ?1 GROUP BY session.id ORDER BY session.rowid",
+    )?;
     rows.map(|row| {
         let (id, handle, project, account, mode, state, reason, branch, checkout, unsandboxed) =
             row?;
-        let sessions = sessions
-            .query_map([&id], |row| Ok((row.get::<_, String>(0)?, row.get(1)?)))?
+        let sessions: Vec<Session> = sessions
+            .query_map([&id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get(1)?,
+                    [
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ],
+                ))
+            })?
             .map(|session| {
-                let (id, provider_id) = session?;
+                let (id, provider_id, sums) = session?;
                 Ok(Session {
                     id: ulid(&id)?,
                     provider_id,
+                    usage: usage(sums)?,
                 })
             })
             .collect::<anyhow::Result<_>>()?;
+        let usage = sessions.iter().map(|session| session.usage).sum();
         Ok(Clone {
             id: ulid(&id)?,
             handle: Handle::new(handle),
@@ -280,9 +301,23 @@ fn read(
             checkout,
             unsandboxed,
             sessions,
+            usage,
         })
     })
     .collect()
+}
+
+/// The usage from the sums of a session's input, output, cache read and cache creation tokens and its cost.
+fn usage(sums: [i64; 5]) -> anyhow::Result<Usage> {
+    let [input, output, cache_read, cache_creation, cost] =
+        sums.map(|sum| u64::try_from(sum).with_context(|| format!("invalid usage {sum}")));
+    Ok(Usage {
+        input_tokens: input?,
+        output_tokens: output?,
+        cache_read_tokens: cache_read?,
+        cache_creation_tokens: cache_creation?,
+        cost_usd_micros: cost?,
+    })
 }
 
 fn mode_of(text: &str) -> anyhow::Result<Mode> {

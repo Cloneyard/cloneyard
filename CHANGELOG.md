@@ -23,5 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `unsandboxed = true` in `node.toml` runs clones without the sandbox, which they need on a kernel without Landlock, and `cy clones` marks them `unsandboxed` ([#31](https://github.com/Cloneyard/cloneyard/issues/31)).
 - Clones report their Claude Code hooks through a spool in their own directory, which the daemon reads in order, also after it was down, and `cy clone show` lists their last 10 events ([#32](https://github.com/Cloneyard/cloneyard/issues/32)).
 - A running clone is `blocked` while it waits for a permission and `idle` once its turn ends, as its hooks say ([#32](https://github.com/Cloneyard/cloneyard/issues/32)).
+- Clones send Claude Code's OpenTelemetry to the daemon, which receives it on `127.0.0.1` with a token for each clone, and `cy clones` and `cy clone show` print the tokens and cost of each clone and session ([#33](https://github.com/Cloneyard/cloneyard/issues/33)).
+- `[telemetry] port` in `node.toml` sets the port of that receiver, 7318 by default ([#33](https://github.com/Cloneyard/cloneyard/issues/33)).
 
 [Unreleased]: https://github.com/Cloneyard/cloneyard/commits/master

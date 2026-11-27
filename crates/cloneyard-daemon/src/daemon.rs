@@ -1,6 +1,7 @@
 use std::fs::{self, DirBuilder, File, Permissions, TryLockError};
-use std::future::Future;
+use std::future::{Future, IntoFuture as _};
 use std::io;
+use std::net::Ipv4Addr;
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::pin::pin;
@@ -8,16 +9,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use tokio::net::UnixListener;
+use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 
 use crate::node::Node;
 use crate::sandbox::Sandboxing;
-use crate::{paths, process, router};
+use crate::{otlp, paths, process, router};
 
-/// A daemon that holds the single-instance locks, has the node's database open and listens on its socket.
+/// How long the receiver of telemetry has to answer its last requests at shutdown.
+const RECEIVER_GRACE: Duration = Duration::from_secs(1);
+
+/// A daemon that holds the single-instance locks, has the node's database open and listens on its socket and for its clones' telemetry.
 pub struct Daemon {
+    receiver: TcpListener,
     listener: UnixListener,
     socket: PathBuf,
     node: Node,
@@ -26,15 +31,16 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Takes the locks in `runtime_dir` and `data_dir`, opens the database and listens on the socket, to start clones as `sandboxing` says; call it inside a tokio runtime.
+    /// Takes the locks in `runtime_dir` and `data_dir`, listens for telemetry on `telemetry_port` of `127.0.0.1`, opens the database and listens on the socket, to start clones as `sandboxing` says; call it inside a tokio runtime.
     ///
     /// # Errors
     ///
-    /// When another daemon holds a lock, or a directory, a lock, the database or the socket can't be set up.
+    /// When another daemon holds a lock, or a directory, a lock, the telemetry port, the database or the socket can't be set up.
     pub async fn bind(
         runtime_dir: &Path,
         data_dir: &Path,
         sandboxing: Sandboxing,
+        telemetry_port: u16,
     ) -> anyhow::Result<Self> {
         create_private_dir(runtime_dir)?;
         let socket = paths::socket(runtime_dir);
@@ -46,7 +52,18 @@ impl Daemon {
         let Some(data_lock) = try_lock(&paths::data_lock(data_dir))? else {
             bail!("another cloneyard daemon is using {}", data_dir.display());
         };
-        let node = Node::open(data_dir, sandboxing).await?;
+        let receiver = TcpListener::bind((Ipv4Addr::LOCALHOST, telemetry_port))
+            .await
+            .with_context(|| {
+                format!(
+                    "cannot listen on 127.0.0.1:{telemetry_port}, the port of [telemetry] in node.toml"
+                )
+            })?;
+        let telemetry_port = receiver
+            .local_addr()
+            .context("cannot read the telemetry port")?
+            .port();
+        let node = Node::open(data_dir, sandboxing, telemetry_port).await?;
 
         // Only the lock holder gets here, so a socket left on disk is stale.
         match fs::remove_file(&socket) {
@@ -59,6 +76,7 @@ impl Daemon {
         let listener = UnixListener::bind(&socket)
             .with_context(|| format!("cannot listen on {}", socket.display()))?;
         Ok(Self {
+            receiver,
             listener,
             socket,
             node,
@@ -72,6 +90,12 @@ impl Daemon {
         &self.socket
     }
 
+    /// The port on `127.0.0.1` where the daemon receives its clones' telemetry.
+    #[must_use]
+    pub fn telemetry_port(&self) -> u16 {
+        self.node.telemetry_port
+    }
+
     /// Serves connections until `shutdown` completes, then closes them and removes the socket.
     ///
     /// # Errors
@@ -79,6 +103,7 @@ impl Daemon {
     /// When the socket can't be removed.
     pub async fn serve(self, shutdown: impl Future<Output = ()>) -> anyhow::Result<()> {
         let Self {
+            receiver,
             listener,
             socket,
             node,
@@ -86,8 +111,17 @@ impl Daemon {
             runtime_lock,
         } = self;
         let node_id = node.id;
+        let telemetry_port = node.telemetry_port;
         let node = Arc::new(node);
         let router = Arc::new(router::router(Arc::clone(&node)));
+        let (stop_receiving, receiving_stopped) = oneshot::channel::<()>();
+        let mut receiving = tokio::spawn(
+            axum::serve(receiver, otlp::router(Arc::clone(&node)))
+                .with_graceful_shutdown(async {
+                    let _ = receiving_stopped.await;
+                })
+                .into_future(),
+        );
         let (stop_following, stopped) = oneshot::channel::<()>();
         let following = tokio::spawn({
             let node = Arc::clone(&node);
@@ -104,6 +138,7 @@ impl Daemon {
             version = env!("CARGO_PKG_VERSION"),
             %node_id,
             socket = %socket.display(),
+            telemetry = format!("127.0.0.1:{telemetry_port}"),
             "daemon listening"
         );
         loop {
@@ -133,6 +168,14 @@ impl Daemon {
 
         connections.shutdown().await;
         node.processes.shutdown(process::GRACE).await;
+        // Only now, as a clone sends its last telemetry while it ends.
+        let _ = stop_receiving.send(());
+        match tokio::time::timeout(RECEIVER_GRACE, &mut receiving).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(error))) => tracing::error!(%error, "the receiver of telemetry failed"),
+            Ok(Err(error)) => tracing::error!(%error, "the receiver of telemetry failed"),
+            Err(_) => receiving.abort(),
+        }
         let _ = stop_following.send(());
         if let Err(error) = following.await {
             tracing::error!(%error, "the spool task failed");

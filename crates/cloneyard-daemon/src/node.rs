@@ -5,12 +5,13 @@ use anyhow::Context as _;
 use cloneyard_store::Store;
 use ulid::Ulid;
 
+use crate::otlp::Tokens;
 use crate::paths;
 use crate::process::Processes;
 use crate::sandbox::Sandboxing;
 use crate::spool::{self, Spools};
 
-/// The state of the node that the handlers share: its id, its database, its data dir, how it sandboxes its clones, their processes and the program their hooks run.
+/// The state of the node that the handlers share: its id, its database, its data dir, how it sandboxes its clones, their processes, the program their hooks run and where their telemetry goes.
 pub(crate) struct Node {
     pub(crate) id: Ulid,
     pub(crate) store: Store,
@@ -20,11 +21,18 @@ pub(crate) struct Node {
     /// The daemon's own binary, as `cy hook` writes a clone's hook events.
     pub(crate) program: String,
     pub(crate) spools: Spools,
+    /// The port on `127.0.0.1` of the receiver of the clones' telemetry.
+    pub(crate) telemetry_port: u16,
+    pub(crate) tokens: Tokens,
 }
 
 impl Node {
-    /// Opens the database in `data_dir` and reads the node id from it, creating both if they are missing, marks the clones that were running as lost and takes the hook events their spools hold; call it inside a tokio runtime.
-    pub(crate) async fn open(data_dir: &Path, sandboxing: Sandboxing) -> anyhow::Result<Self> {
+    /// Opens the database in `data_dir` and reads the node id from it, creating both if they are missing, marks the clones that were running as lost and takes the hook events their spools hold, for clones whose telemetry goes to `telemetry_port`; call it inside a tokio runtime.
+    pub(crate) async fn open(
+        data_dir: &Path,
+        sandboxing: Sandboxing,
+        telemetry_port: u16,
+    ) -> anyhow::Result<Self> {
         let program = env::current_exe().context("cannot find the daemon's own binary")?;
         let program = program
             .to_str()
@@ -52,6 +60,8 @@ impl Node {
             processes: Processes::default(),
             program,
             spools,
+            telemetry_port,
+            tokens: Tokens::default(),
         })
     }
 }
