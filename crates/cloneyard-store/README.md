@@ -13,6 +13,7 @@ A SQLite database on a thread of its own: the node's `cloneyard.db`, and any oth
 - Accounts with their directories on a node; a new account and its directory go in one transaction.
 - Clones with their sessions and whether they run without the sandbox, which migration `0006` sets for the clones before it: a new clone gets the node's next handle from a counter in `meta`, which never gives a number twice, and goes in one transaction with its first session; a session another clone has is an error; `lose_clones` sets the clones still running, `working`, `blocked` or `idle`, to `error`.
 - Hook events of clones, only ever appended, with a `seq` cursor and, from migration `0009`, the id and the command or path of a tool call: one goes in one transaction with its session when that is new and the state it gives a running clone, while a finished one keeps its state. An event of an unknown clone or with another clone's session is refused, and a spool file the clone's events already have adds nothing.
+- The tool calls of a node's clones since a point in time, of one project or all, each joined to its hook by `tool_use_id` and counted per tool and the start of its command or its path in the checkout: the calls, the average result in tokens, the errors, the retries after an error and the denials.
 - One write path for entity tables, which adds a `change_log` row for each entity a transaction changes, with the node id and an HLC timestamp that never goes back; an update logs the key and the fields it set.
 
 ## Out of scope

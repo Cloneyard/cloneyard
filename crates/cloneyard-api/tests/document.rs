@@ -60,7 +60,8 @@ fn lists_every_method_and_which_of_them_take_params() {
             "clone.list",
             "clone.show",
             "clone.stop",
-            "clone.events"
+            "clone.events",
+            "usage.tools"
         ]
     );
     let with_params: Vec<&Value> = methods
@@ -76,7 +77,8 @@ fn lists_every_method_and_which_of_them_take_params() {
             "clone.run",
             "clone.show",
             "clone.stop",
-            "clone.events"
+            "clone.events",
+            "usage.tools"
         ]
     );
 }
@@ -374,7 +376,9 @@ fn results_refer_to_shared_schemas_in_components() {
             "Repo",
             "Session",
             "State",
+            "ToolUsage",
             "Usage",
+            "UsageToolsResult",
             "VersionResult"
         ]
     );

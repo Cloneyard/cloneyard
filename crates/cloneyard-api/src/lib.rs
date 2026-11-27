@@ -17,6 +17,7 @@ pub mod clone;
 pub mod project;
 pub mod rpc;
 pub mod system;
+pub mod usage;
 
 /// A method of the API: its name, what it does, and the types of its params, its result and its errors.
 pub trait Method {
@@ -109,6 +110,7 @@ pub fn document() -> Document {
         method::<clone::Show>(&mut generator),
         method::<clone::Stop>(&mut generator),
         method::<clone::Events>(&mut generator),
+        method::<usage::Tools>(&mut generator),
     ];
     Document {
         openrpc: "1.4.1".to_owned(),

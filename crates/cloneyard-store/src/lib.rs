@@ -5,6 +5,7 @@ mod hook;
 mod schema;
 mod store;
 mod telemetry;
+mod usage;
 mod write;
 
 pub use clone::NewClone;

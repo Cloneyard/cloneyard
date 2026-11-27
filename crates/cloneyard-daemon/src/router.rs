@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use cloneyard_api::rpc::Discover;
 use cloneyard_api::system::{Ping, PingResult, Version, VersionResult};
-use cloneyard_api::{account, clone, project};
+use cloneyard_api::{account, clone, project, usage};
 use cloneyard_rpc::{Error, HandlerError, Router};
 
 use crate::node::Node;
@@ -74,9 +74,16 @@ pub(crate) fn router(node: Arc<Node>) -> Router {
                 async move { reply(crate::clone::stop(&node, params).await) }
             }
         })
-        .handle::<clone::Events>(move |params| {
+        .handle::<clone::Events>({
             let node = Arc::clone(&node);
-            async move { reply(crate::clone::events(&node, params).await) }
+            move |params| {
+                let node = Arc::clone(&node);
+                async move { reply(crate::clone::events(&node, params).await) }
+            }
+        })
+        .handle::<usage::Tools>(move |params| {
+            let node = Arc::clone(&node);
+            async move { reply(crate::usage::tools(&node, params).await) }
         })
         .handle::<Discover>(move |()| future::ready(Ok(document.clone())))
 }

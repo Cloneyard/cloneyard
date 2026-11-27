@@ -497,6 +497,55 @@
         }
       ],
       "paramStructure": "by-name"
+    },
+    {
+      "name": "usage.tools",
+      "summary": "Returns the tool calls of the clones on this node since a point in time, per tool and what the calls were about",
+      "params": [
+        {
+          "name": "project",
+          "schema": {
+            "description": "The name of the project whose clones count, or every project when left out.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "name": "since",
+          "required": true,
+          "schema": {
+            "description": "The start of the period, in milliseconds since the Unix epoch.",
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "UsageToolsResult",
+        "schema": {
+          "$ref": "#/components/schemas/UsageToolsResult"
+        }
+      },
+      "errors": [
+        {
+          "code": 1300,
+          "message": "No such project",
+          "data": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      ],
+      "paramStructure": "by-name"
     }
   ],
   "components": {
@@ -839,6 +888,70 @@
           }
         ]
       },
+      "ToolUsage": {
+        "description": "The calls of one tool about one command or path, or about anything when its tool doesn't say.",
+        "properties": {
+          "average_result_tokens": {
+            "description": "The average size of their results in tokens, as bytes / 4, over the calls that report one; null when none does.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "calls": {
+            "description": "The calls, the denied ones included.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "command": {
+            "description": "What the commands start with, the program and its first argument unless that is an option or a path, such as `gh api`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "denials": {
+            "description": "The calls that the clone's permissions denied.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "errors": {
+            "description": "The calls that ran and failed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "The file that the calls read or changed, relative to the clone's checkout when it is inside it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "retries": {
+            "description": "The calls whose previous call of the same tool and command or path in their session failed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tool": {
+            "description": "The provider's name of the tool, such as `Bash`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "calls",
+          "errors",
+          "retries",
+          "denials"
+        ],
+        "type": "object"
+      },
       "Usage": {
         "description": "The tokens and the cost of the requests to the model, as the provider's telemetry reports them.",
         "properties": {
@@ -876,6 +989,21 @@
           "cache_read_tokens",
           "cache_creation_tokens",
           "cost_usd_micros"
+        ],
+        "type": "object"
+      },
+      "UsageToolsResult": {
+        "properties": {
+          "tools": {
+            "description": "Sorted by the bytes of their results in total, most first.",
+            "items": {
+              "$ref": "#/components/schemas/ToolUsage"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tools"
         ],
         "type": "object"
       },
