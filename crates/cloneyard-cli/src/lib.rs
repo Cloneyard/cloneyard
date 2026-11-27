@@ -6,6 +6,8 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use cloneyard_api::clone::Handle;
 
+use crate::usage::Period;
+
 mod account;
 mod claude;
 mod clone;
@@ -15,6 +17,7 @@ mod output;
 mod ping;
 mod project;
 mod rpc;
+mod usage;
 
 // A fixed name, so `cy --version` also prints "cloneyard <version>".
 #[derive(Debug, Parser)]
@@ -71,6 +74,11 @@ enum Command {
         #[arg(last = true, required = true)]
         command: Vec<OsString>,
     },
+    /// Show what the clones used
+    Usage {
+        #[command(subcommand)]
+        command: UsageCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -120,6 +128,19 @@ enum ProjectCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum UsageCommand {
+    /// List the tool calls of the clones per tool and command or path, with the average result, the errors, the retries after an error and the denials
+    Tools {
+        /// How far back to count, such as 30m, 12h or 7d
+        #[arg(long, default_value = "7d")]
+        since: Period,
+        /// Count only the clones of this project
+        #[arg(long)]
+        project: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum RpcCommand {
     /// Print the OpenRPC document of the API
     Schema,
@@ -157,6 +178,9 @@ pub fn run() -> ExitCode {
             command: RpcCommand::Schema,
         } => rpc::schema(),
         Command::Sandbox { policy, command } => sandbox(&policy, &command),
+        Command::Usage {
+            command: UsageCommand::Tools { since, project },
+        } => usage::tools(since, project),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
