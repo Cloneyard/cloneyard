@@ -71,3 +71,7 @@ _Avoid_: queue, inbox, outbox
 **Usage**:
 The tokens that a clone or a session took from the model, and their cost, as its provider's telemetry reports them; on a subscription, the cost is an estimate at API prices.
 _Avoid_: consumption, spend, billing
+
+**Tool call**:
+A clone's request to run one of its provider's tools, such as a shell command or a file read, which the clone's permissions allow or deny; one that runs succeeds or fails.
+_Avoid_: tool use, invocation, action
