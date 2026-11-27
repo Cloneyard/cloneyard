@@ -1,4 +1,3 @@
-use std::ops::Range;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::bail;
@@ -8,6 +7,7 @@ use cloneyard_api::clone::{
 };
 
 use crate::connection;
+use crate::output::{table, tokens};
 
 // The checkout of a large repo takes a while.
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
@@ -65,39 +65,6 @@ pub(crate) fn list() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The rows as lines of columns two spaces apart, the columns in `right` aligned to the right, without spaces at the end.
-fn table(rows: &[Vec<String>], right: Range<usize>) -> Vec<String> {
-    let mut widths: Vec<usize> = Vec::new();
-    for row in rows {
-        for (column, cell) in row.iter().enumerate() {
-            let width = cell.chars().count();
-            match widths.get_mut(column) {
-                Some(widest) => *widest = (*widest).max(width),
-                None => widths.push(width),
-            }
-        }
-    }
-    rows.iter()
-        .map(|row| {
-            let cells: Vec<String> = row
-                .iter()
-                .zip(&widths)
-                .enumerate()
-                .map(|(column, (cell, &width))| {
-                    if right.contains(&column) {
-                        format!("{cell:>width$}")
-                    } else if column + 1 == row.len() {
-                        cell.clone()
-                    } else {
-                        format!("{cell:width$}")
-                    }
-                })
-                .collect();
-            cells.join("  ")
-        })
-        .collect()
-}
-
 /// The input, output and cache tokens of `usage`, and its cost.
 fn usage_cells(usage: &Usage) -> [String; 4] {
     [
@@ -109,21 +76,6 @@ fn usage_cells(usage: &Usage) -> [String; 4] {
         ),
         cost(usage.cost_usd_micros),
     ]
-}
-
-/// A count of tokens as people read it, such as `950`, `34.2k` or `1.5M`.
-fn tokens(count: u64) -> String {
-    match count {
-        ..1000 => count.to_string(),
-        1000..999_950 => {
-            let tenths = (count + 50) / 100;
-            format!("{}.{}k", tenths / 10, tenths % 10)
-        }
-        _ => {
-            let tenths = (count + 50_000) / 100_000;
-            format!("{}.{}M", tenths / 10, tenths % 10)
-        }
-    }
 }
 
 /// A cost in millionths of a US dollar, to four places below a dollar and to the cent from one.
@@ -229,7 +181,7 @@ mod tests {
     use cloneyard_api::clone::{HookEvent, Usage};
     use ulid::Ulid;
 
-    use super::{cost, event_lines, table, tokens, usage_cells};
+    use super::{cost, event_lines, usage_cells};
 
     fn event(hook: &str, tool: Option<&str>, at: i64) -> HookEvent {
         HookEvent {
@@ -270,21 +222,6 @@ mod tests {
     }
 
     #[test]
-    fn tokens_read_as_a_count_then_thousands_then_millions() {
-        let shown = [
-            0, 999, 1000, 34_249, 34_250, 999_949, 999_950, 1_449_999, 12_345_678,
-        ]
-        .map(tokens);
-
-        assert_eq!(
-            shown,
-            [
-                "0", "999", "1.0k", "34.2k", "34.3k", "999.9k", "1.0M", "1.4M", "12.3M"
-            ]
-        );
-    }
-
-    #[test]
     fn a_cost_has_four_places_below_a_dollar_and_cents_from_one() {
         let shown = [
             0, 49, 6_704, 452_349, 999_949, 999_950, 1_234_567, 12_300_000,
@@ -312,25 +249,6 @@ mod tests {
         assert_eq!(
             usage_cells(&usage),
             ["2 in", "10 out", "34.2k cache", "$0.0067"]
-        );
-    }
-
-    #[test]
-    fn a_table_pads_its_columns_aligns_the_right_ones_and_ends_each_line_with_its_last_cell() {
-        let rows = [
-            vec!["CT-0001", "done", "2 in", "unsandboxed"],
-            vec!["CT-0002", "working", "1.2k in"],
-        ]
-        .map(|row| row.into_iter().map(str::to_owned).collect::<Vec<String>>());
-
-        let lines = table(&rows, 2..3);
-
-        assert_eq!(
-            lines,
-            [
-                "CT-0001  done        2 in  unsandboxed",
-                "CT-0002  working  1.2k in",
-            ]
         );
     }
 }

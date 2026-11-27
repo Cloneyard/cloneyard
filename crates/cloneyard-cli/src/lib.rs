@@ -11,6 +11,7 @@ mod claude;
 mod clone;
 mod connection;
 mod hook;
+mod output;
 mod ping;
 mod project;
 mod rpc;
