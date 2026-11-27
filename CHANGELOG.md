@@ -25,5 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A running clone is `blocked` while it waits for a permission and `idle` once its turn ends, as its hooks say ([#32](https://github.com/Cloneyard/cloneyard/issues/32)).
 - Clones send Claude Code's OpenTelemetry to the daemon, which receives it on `127.0.0.1` with a token for each clone, and `cy clones` and `cy clone show` print the tokens and cost of each clone and session ([#33](https://github.com/Cloneyard/cloneyard/issues/33)).
 - `[telemetry] port` in `node.toml` sets the port of that receiver, 7318 by default ([#33](https://github.com/Cloneyard/cloneyard/issues/33)).
+- `cy usage tools` lists the tool calls of the clones per tool and command or file, with the average result in tokens, the errors, the retries after an error and the denials, over `--since` and for one `--project` ([#34](https://github.com/Cloneyard/cloneyard/issues/34)).
 
 [Unreleased]: https://github.com/Cloneyard/cloneyard/commits/master
