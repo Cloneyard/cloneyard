@@ -223,7 +223,8 @@ except Exception:
 rec = {
     "t": time.time(), "source": src, "event": data.get("hook_event_name"),
     "session_id": data.get("session_id"), "transcript_path": data.get("transcript_path"),
-    "cwd": data.get("cwd"), "tool_name": data.get("tool_name"), "keys": sorted(data.keys()),
+    "cwd": data.get("cwd"), "tool_name": data.get("tool_name"), "tool_use_id": data.get("tool_use_id"),
+    "tool_input": data.get("tool_input"), "keys": sorted(data.keys()),
     "notification_type": data.get("notification_type"),
     "config_dir_env": os.environ.get("CLAUDE_CONFIG_DIR"),
     "telemetry_env": {k: (v if k != "OTEL_EXPORTER_OTLP_ENDPOINT" or v.startswith("http://127.0.0.1") else "<not ours>")
@@ -1598,9 +1599,13 @@ def t_telemetry(ctx, r):
         "OTEL_EXPORTER_OTLP_HEADERS": f"Authorization=Bearer {token}",
         "OTEL_LOGS_EXPORT_INTERVAL": "1000",
     }
-    cmd = [ctx.claude, "-p", "Use the Bash tool to run exactly: echo cy-spike-ok. Then reply with only the command output.",
-           "--model", ctx.model, "--output-format", "json", "--tools", "Bash", "--allowedTools", "Bash(echo *)",
-           "--permission-prompts", "none"]
+    hook_log = ctx.out / "telemetry-hooks.jsonl"
+    _, hook_py = make_plugin(ctx, "plugin-telemetry", hook_log)
+    prompt = ("Use the Bash tool to run exactly: echo cy-spike-ok. Then use the Bash tool to run exactly: "
+              "touch cy-spike-denied. Then reply with only the output of the first command.")
+    cmd = [ctx.claude, "-p", prompt, "--model", ctx.model, "--output-format", "json", "--tools", "Bash",
+           "--allowedTools", "Bash(echo *)", "--permission-prompts", "none",
+           "--settings", json.dumps(settings_hooks(hook_py, hook_log))]
     try:
         rc, out, err, _ = run(cmd, env=ctx.env(env), cwd=repo, timeout=ctx.args.timeout)
         # Read at once: what arrives after the exit would be lost with the clone.
@@ -1633,6 +1638,25 @@ def t_telemetry(ctx, r):
     for name in ("tool_result", "tool_decision"):
         got = by_name.get(name, [])
         r.check(f"{name} has tool_use_id", bool(got) and all("tool_use_id" in a for a in got), f"{len(got)} events")
+    pre = [h for h in read_jsonl(hook_log) if h.get("event") == "PreToolUse"]
+    hook_ids = {h.get("tool_use_id") for h in pre}
+    decision_ids = {a.get("tool_use_id") for a in by_name.get("tool_decision", [])}
+    result_ids = {a.get("tool_use_id") for a in by_name.get("tool_result", [])}
+    r.data["tool_calls"] = {"PreToolUse": [(h.get("tool_use_id"), (h.get("tool_input") or {}).get("command")) for h in pre],
+                            "tool_decision": [(a.get("tool_use_id"), a.get("decision"), a.get("source"))
+                                              for a in by_name.get("tool_decision", [])],
+                            "tool_result": [(a.get("tool_use_id"), a.get("success"), a.get("tool_result_size_bytes"))
+                                            for a in by_name.get("tool_result", [])]}
+    r.check("each PreToolUse has the tool_use_id of the call's tool_decision",
+            bool(pre) and None not in hook_ids and hook_ids == decision_ids, f"hooks {hook_ids} decisions {decision_ids}")
+    r.check("each tool_result has the tool_use_id of a PreToolUse", bool(result_ids) and result_ids <= hook_ids,
+            f"results {result_ids} hooks {hook_ids}")
+    denied = {h.get("tool_use_id") for h in pre
+              if "cy-spike-denied" in str((h.get("tool_input") or {}).get("command"))}
+    rejected = {a.get("tool_use_id") for a in by_name.get("tool_decision", []) if a.get("decision") == "reject"}
+    r.check("a command outside --allowedTools gives tool_decision reject", bool(denied) and denied <= rejected,
+            f"denied {denied} rejected {rejected}")
+    r.data["denied_call_has_tool_result"] = bool(denied & result_ids)
     try:
         total = json.loads(out).get("total_cost_usd")
     except ValueError:
@@ -1770,7 +1794,8 @@ TESTS = [
      "a checkout's disableAllHooks doesn't turn off the hooks of --settings that say false"),
     ("telemetry", t_telemetry, True, False,
      "OTLP/HTTP JSON logs with a clone's exporter variables and token, the last batch before exit, request_id, "
-     "tool_use_id and cost_usd_micros; a checkout's settings neither turn them off nor send them elsewhere"),
+     "tool_use_id and cost_usd_micros, the tool_use_id of PreToolUse and the reject of a denied call; "
+     "a checkout's settings neither turn them off nor send them elsewhere"),
     ("cc_sandbox_inside", t_cc_sandbox_inside, True, False,
      "native CC sandbox inside Landlock and seccomp: what Bash does when bwrap can't start"),
     ("remote_control", t_remote_control, True, True, "--remote-control prints a claude.ai/code URL (opt-in: --with-rc)"),
