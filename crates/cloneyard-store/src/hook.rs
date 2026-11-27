@@ -16,6 +16,12 @@ pub struct NewHookEvent {
     pub session: String,
     pub hook: String,
     pub tool: Option<String>,
+    /// The provider's id of the tool call of a tool hook.
+    pub tool_use_id: Option<String>,
+    /// The command that the tool call runs, for a shell tool.
+    pub command: Option<String>,
+    /// The file that the tool call reads or changes, for a file tool.
+    pub path: Option<String>,
     /// When the hook ran, in milliseconds since the Unix epoch.
     pub at: i64,
     /// The name of its file in the spool.
@@ -46,6 +52,9 @@ impl Store {
             session: provider_id,
             hook,
             tool,
+            tool_use_id,
+            command,
+            path,
             at,
             file,
             payload,
@@ -87,6 +96,9 @@ impl Store {
                     ("session_id", json!(session_id)),
                     ("hook", json!(hook)),
                     ("tool", json!(tool)),
+                    ("tool_use_id", json!(tool_use_id)),
+                    ("command", json!(command)),
+                    ("path", json!(path)),
                     ("at", json!(at)),
                     ("file", json!(file)),
                     ("payload", json!(payload)),
@@ -168,6 +180,9 @@ mod tests {
             session: session.to_owned(),
             hook: hook.to_owned(),
             tool: None,
+            tool_use_id: None,
+            command: None,
+            path: None,
             at: 1_764_000_000_000,
             file: file.to_owned(),
             payload: json!({"session_id": session}).to_string(),
@@ -240,6 +255,41 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&payload).unwrap(),
             json!({"session_id": "second"})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tool_hook_keeps_the_id_and_the_command_or_path_of_its_call() {
+        let dir = TempDir::new().unwrap();
+        let (store, _, clone) = with_clone(&dir).await;
+        let mut bash = event(&clone, "first", "PreToolUse", "1");
+        bash.tool_use_id = Some("toolu_01".to_owned());
+        bash.command = Some("cargo test".to_owned());
+        let mut read = event(&clone, "first", "PreToolUse", "2");
+        read.tool_use_id = Some("toolu_02".to_owned());
+        read.path = Some("/c/README.md".to_owned());
+
+        for event in [bash, read, event(&clone, "first", "Stop", "3")] {
+            store.add_hook_event(event).await.unwrap().unwrap();
+        }
+
+        let connection = sql(&dir);
+        let mut statement = connection
+            .prepare("SELECT tool_use_id, command, path FROM hook_event ORDER BY seq")
+            .unwrap();
+        let calls: Vec<(Option<String>, Option<String>, Option<String>)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        let text = |text: &str| Some(text.to_owned());
+        assert_eq!(
+            calls,
+            [
+                (text("toolu_01"), text("cargo test"), None),
+                (text("toolu_02"), None, text("/c/README.md")),
+                (None, None, None),
+            ]
         );
     }
 

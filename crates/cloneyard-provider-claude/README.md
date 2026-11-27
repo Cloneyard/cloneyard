@@ -9,7 +9,7 @@ Claude Code as a provider: what Cloneyard knows about starting `claude` for an a
 - `inside_sandbox`: turns off the auto-updater through `DISABLE_AUTOUPDATER`, as it would replace the `claude` that runs outside the sandbox.
 - `headless::command`: `claude -p` with stream-json in and out on a given session id and settings, with `--permission-prompts none`, so a tool that would ask for permission is denied at once; `headless::user_message` is the line that sends it a message.
 - `headless::parse`: the events on its stdout that a clone's state needs, `system/init` with the session id and `result`, which is an error whenever `is_error` is true, whatever its `subtype` says.
-- `hook::parse`: what a hook's JSON tells, its session, its tool and the state it gives a clone (`Notification` with `permission_prompt` gives blocked, `Stop` idle, a prompt or a tool hook working), and the JSON without `tool_response`, which can hold a whole file.
+- `hook::parse`: what a hook's JSON tells, its session, its tool, the id of its tool call with the command of `Bash` or the path of a file tool, and the state it gives a clone (`Notification` with `permission_prompt` gives blocked, `Stop` idle, a prompt or a tool hook working), and the JSON without `tool_response`, which can hold a whole file.
 
 ## Out of scope
 

@@ -13,6 +13,7 @@ mod router;
 mod run;
 mod sandbox;
 pub mod spool;
+mod usage;
 
 pub use config::{Config, Log, Telemetry};
 pub use daemon::Daemon;

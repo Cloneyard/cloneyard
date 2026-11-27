@@ -59,6 +59,46 @@ curl --silent --show-error --fail --header "Authorization: Bearer $token" \
 }]}]}]}
 JSON"#;
 
+/// `tool_call <id> <tool> <input> <time> <decision> [<success> <bytes>]` runs the call's `PreToolUse` hook and adds its `tool_decision`, and its `tool_result` when it ran, to the records that `send_tools` posts as Claude Code would.
+const TOOL_CALLS: &str = r#"now=$(date +%s%N)
+two_days_ago=$(( $(date +%s) - 172800 ))000000000
+records=
+attribute() { printf ',{"key":"%s","value":{"stringValue":"%s"}}' "$1" "$2"; }
+record() {
+    printf '%s{"timeUnixNano":"%s","attributes":[{"key":"event.name","value":{"stringValue":"%s"}}%s%s%s%s]}' \
+        "${records:+,}" "$1" "$2" "$(attribute session.id "$session")" "$(attribute tool_use_id "$3")" \
+        "$(attribute tool_name "$4")" "$5"
+}
+tool_call() {
+    hook PreToolUse ",\"tool_name\":\"$2\",\"tool_use_id\":\"$1\",\"tool_input\":$3"
+    records="$records$(record "$4" tool_decision "$1" "$2" "$(attribute decision "$5")")"
+    if [ -n "$6" ]; then
+        records="$records$(record "$4" tool_result "$1" "$2" "$(attribute success "$6")$(attribute tool_result_size_bytes "$7")")"
+    fi
+}
+send_tools() {
+    token="${OTEL_EXPORTER_OTLP_HEADERS#Authorization=Bearer }"
+    printf '{"resourceLogs":[{"scopeLogs":[{"logRecords":[%s]}]}]}' "$records" |
+        curl --silent --show-error --fail --header "Authorization: Bearer $token" \
+            --header 'Content-Type: application/json' --data-binary @- \
+            "$OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" > "$out/telemetry" 2>&1
+}"#;
+
+/// The calls of the clone with prompt `first` and of the one with prompt `second`, which the expected lines of `cy usage tools` count by hand.
+const FIRST_AND_SECOND_CALLS: &str = r#"case "$prompt" in
+*'"first"'*)
+    tool_call toolu_1 Bash '{"command":"gh api repos/a/b"}' "$now" accept false 400
+    tool_call toolu_2 Read "{\"file_path\":\"$PWD/README.md\"}" "$now" accept true 4000
+    tool_call toolu_3 Bash '{"command":"gh api repos/a/b --jq .x"}' "$now" accept true 2000
+    tool_call toolu_4 Bash '{"command":"rm -rf target"}' "$now" reject
+    tool_call toolu_5 Bash '{"command":"cargo test"}' "$two_days_ago" accept true 800
+    ;;
+*'"second"'*)
+    tool_call toolu_1 Read "{\"file_path\":\"$PWD/README.md\"}" "$now" accept true 2000
+    ;;
+esac
+send_tools"#;
+
 /// A git repo at `path` with one commit, given as its canonical path.
 fn repo_with_commit(path: &Path) -> PathBuf {
     fs::create_dir_all(path).unwrap();
@@ -844,4 +884,68 @@ fn clones_shows_the_tokens_and_cost_a_clone_sent_also_after_a_restart_and_stores
             database.display()
         );
     }
+}
+
+fn usage_tools(node: &Node, args: &[&str]) -> std::process::Output {
+    node.cy("usage").arg("tools").args(args).output().unwrap()
+}
+
+#[test]
+fn usage_tools_counts_the_tool_calls_of_the_clones_as_by_hand() {
+    let (node, _repo, _daemon) = node_with_project_and_account();
+    let web = repo_with_commit(&node.home.path().join("web"));
+    stdout_of_success(&project_add(&node, &web));
+    fake_headless(
+        &node,
+        &format!("{RECORD}\n{HOOK}\n{TOOL_CALLS}\n{FIRST_AND_SECOND_CALLS}\n{DONE}"),
+    );
+    stdout_of_success(&run(&node, "first"));
+    let second = node
+        .cy("clone")
+        .args(["run", "--project", "web", "--account", "personal", "second"])
+        .output()
+        .unwrap();
+    stdout_of_success(&second);
+    let today = "\
+tool             calls  avg result  errors  retries  denials
+Read(README.md)      2     750 tok       0        0        0
+Bash(gh api …)       2     300 tok       1        1        0
+Bash(rm …)           1           -       0        0        1
+";
+
+    wait_until("the tool calls of today", || {
+        stdout_of_success(&usage_tools(&node, &["--since", "1d"])) == today
+    });
+    let week = stdout_of_success(&usage_tools(&node, &[]));
+    let web_only = stdout_of_success(&usage_tools(&node, &["--since", "1d", "--project", "web"]));
+    let invalid = usage_tools(&node, &["--since", "7x"]);
+    let unknown = stderr_of_failure(&usage_tools(&node, &["--project", "nope"]));
+
+    assert_eq!(
+        week,
+        "\
+tool                calls  avg result  errors  retries  denials
+Read(README.md)         2     750 tok       0        0        0
+Bash(gh api …)          2     300 tok       1        1        0
+Bash(cargo test …)      1     200 tok       0        0        0
+Bash(rm …)              1           -       0        0        1
+"
+    );
+    assert_eq!(
+        web_only,
+        "\
+tool             calls  avg result  errors  retries  denials
+Read(README.md)      1     500 tok       0        0        0
+"
+    );
+    let invalid_text = String::from_utf8_lossy(&invalid.stderr);
+    assert_eq!(invalid.status.code(), Some(2), "{invalid:?}");
+    assert!(
+        invalid_text.starts_with(
+            "error: invalid value '7x' for '--since <SINCE>': invalid period \"7x\": \
+             a period is a number and m, h or d, such as 7d\n"
+        ),
+        "{invalid_text}"
+    );
+    assert_eq!(unknown, "error: no project nope\n");
 }

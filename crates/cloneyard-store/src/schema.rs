@@ -17,6 +17,7 @@ pub(crate) fn migrations() -> Vec<M<'static>> {
         M::up(include_str!("../migrations/0006-clone-unsandboxed.sql")),
         M::up(include_str!("../migrations/0007-hook-event.sql")),
         M::up(include_str!("../migrations/0008-telemetry.sql")),
+        M::up(include_str!("../migrations/0009-hook-event-tool-call.sql")),
     ]
 }
 
@@ -173,7 +174,7 @@ mod tests {
 
         let connection = open_latest(&dir);
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 8);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 9);
         assert_eq!(pragma::<String>(&connection, "journal_mode"), "wal");
         assert_eq!(pragma::<i64>(&connection, "foreign_keys"), 1);
         assert!(!dir.path().join("backups").exists());
@@ -205,7 +206,7 @@ mod tests {
 
         let after = unix_seconds();
         let expected = vec![("cloneyard".to_owned(), "api".to_owned())];
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 8);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 9);
         let paths: i64 = connection
             .query_row("SELECT count(*) FROM repo_path", [], |row| row.get(0))
             .unwrap();
@@ -240,7 +241,7 @@ mod tests {
 
         let connection = open(&path, migrations()).unwrap();
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 8);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 9);
         let counts: (i64, i64, i64) = connection
             .query_row(
                 "SELECT (SELECT count(*) FROM project), (SELECT count(*) FROM account), \
@@ -271,7 +272,7 @@ mod tests {
 
         let connection = open(&path, migrations()).unwrap();
 
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 8);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 9);
         let counts: (i64, i64, i64) = connection
             .query_row(
                 "SELECT (SELECT count(*) FROM account), (SELECT count(*) FROM clone), \
@@ -308,7 +309,7 @@ mod tests {
         let unsandboxed: i64 = connection
             .query_row("SELECT unsandboxed FROM clone", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 8);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 9);
         assert_eq!(unsandboxed, 1);
         let [backup] = backups(&dir).try_into().unwrap();
         let name = backup.file_name().unwrap().to_str().unwrap();
@@ -327,11 +328,48 @@ mod tests {
         let events: i64 = connection
             .query_row("SELECT count(*) FROM hook_event", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 8);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 9);
         assert_eq!(events, 0);
         let [backup] = backups(&dir).try_into().unwrap();
         let name = backup.file_name().unwrap().to_str().unwrap();
         assert!(name.starts_with("cloneyard-v6-"), "{name}");
+    }
+
+    #[test]
+    fn backs_up_a_v8_database_and_its_hook_events_have_no_tool_call() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cloneyard.db");
+        let v8: Vec<M<'static>> = migrations().into_iter().take(8).collect();
+        let connection = open(&path, v8).unwrap();
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO project (id, name) VALUES ('{PROJECT}', 'app'); \
+                 INSERT INTO repo (id, project_id, name) VALUES ('{REPO}', '{PROJECT}', 'app'); \
+                 INSERT INTO account (id, name, provider) VALUES ('{ACCOUNT}', 'personal', 'claude-code'); \
+                 INSERT INTO clone (id, node_id, handle, project_id, repo_id, account_id, mode, state, branch, checkout) \
+                 VALUES ('{CLONE}', 'node', 1, '{PROJECT}', '{REPO}', '{ACCOUNT}', 'headless', 'done', 'cloneyard/ct-0001', '/c'); \
+                 INSERT INTO session (id, clone_id, provider_id) VALUES ('{OTHER_CLONE}', '{CLONE}', 's'); \
+                 INSERT INTO hook_event (id, clone_id, session_id, hook, tool, at, file, payload) \
+                 VALUES ('{OTHER_PROJECT}', '{CLONE}', '{OTHER_CLONE}', 'PreToolUse', 'Bash', 1, '1', \
+                 '{{\"tool_use_id\": \"toolu_01\"}}');"
+            ))
+            .unwrap();
+        drop(connection);
+
+        let connection = open(&path, migrations()).unwrap();
+
+        let call: (Option<String>, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT tool_use_id, command, path FROM hook_event",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 9);
+        assert_eq!(call, (None, None, None));
+        let [backup] = backups(&dir).try_into().unwrap();
+        let name = backup.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("cloneyard-v8-"), "{name}");
     }
 
     #[test]
@@ -406,13 +444,13 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "database schema v10 is newer than this cloneyard (v8); \
+                "database schema v11 is newer than this cloneyard (v9); \
                  upgrade cloneyard or restore a file from {}",
                 dir.path().join("backups").display()
             )
         );
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(pragma::<i64>(&connection, "user_version"), 10);
+        assert_eq!(pragma::<i64>(&connection, "user_version"), 11);
     }
 
     #[test]

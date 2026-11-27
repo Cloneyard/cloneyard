@@ -9,6 +9,7 @@ The `cloneyard` binary and its short alias `cy`: a thin client of the daemon, an
 - `cy daemon` runs the daemon in the foreground until SIGTERM or Ctrl+C.
 - `cy ping` prints the daemon's version, the node id and the round-trip time of one call.
 - `cy project add <path> [--name <name>]` adds the git repo at the path as a project and prints its name and id; `cy projects` lists the projects with the paths of their repos.
+- `cy usage tools` lists the tool calls of the clones since `--since`, 7 days by default, of one `--project` or all: per tool and the start of a command or a path, the calls, the average result in tokens, the errors, the retries after an error and the denials.
 - `cy hook <event>`, hidden from `--help`, writes the JSON on stdin into the spool that `CLONEYARD_SPOOL` names; Claude Code runs it for each hook of a clone. It prints nothing on stdout and always exits 0, with the reason of a failure on stderr.
 - `cy sandbox <policy> -- <program>`, hidden from `--help`, enters a clone's sandbox and runs the program in it; the daemon starts every clone through it.
 - `cy rpc schema` prints the OpenRPC document that the daemon serves, in the format of `schema/cloneyard.openrpc.json`.

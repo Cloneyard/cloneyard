@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use cloneyard_api::clone::State;
-use cloneyard_provider_claude::hook::{self, Hook};
+use cloneyard_provider_claude::hook::{self, Hook, Target};
 use cloneyard_store::{NewHookEvent, Store};
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use rustix::io::Errno;
@@ -277,11 +277,18 @@ async fn take(
     let Hook {
         session_id,
         tool,
+        tool_use_id,
+        target,
         state,
         payload,
     } = match hook::parse(event, &payload) {
         Ok(hook) => hook,
         Err(invalid) => return Ok(Some(invalid.to_string())),
+    };
+    let (command, path) = match target {
+        Some(Target::Command(command)) => (Some(command), None),
+        Some(Target::Path(path)) => (None, Some(path)),
+        None => (None, None),
     };
     let added = store
         .add_hook_event(NewHookEvent {
@@ -289,6 +296,9 @@ async fn take(
             session: session_id,
             hook: event.to_owned(),
             tool,
+            tool_use_id,
+            command,
+            path,
             at,
             file: name.to_owned(),
             payload,

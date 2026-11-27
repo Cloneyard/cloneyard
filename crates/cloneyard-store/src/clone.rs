@@ -342,9 +342,9 @@ pub(crate) mod tests {
 
     pub(crate) struct Fixture {
         pub(crate) node: Ulid,
-        project: Ulid,
-        repo: Ulid,
-        account: Ulid,
+        pub(crate) project: Ulid,
+        pub(crate) repo: Ulid,
+        pub(crate) account: Ulid,
     }
 
     pub(crate) async fn fixture(store: &Store) -> Fixture {

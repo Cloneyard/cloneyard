@@ -1,6 +1,6 @@
 ---
 title: Telemetry
-description: How clones send Claude Code's OpenTelemetry to the daemon, and the tokens and cost that cy clones and cy clone show print from it.
+description: How clones send Claude Code's OpenTelemetry to the daemon, and the tokens, cost and tool calls that cy clones, cy clone show and cy usage tools print.
 ---
 
 Each clone sends Claude Code's OpenTelemetry events to the daemon, which receives them itself as OTLP/HTTP JSON on `127.0.0.1:7318`, without a collector. A clone sends them with a token of its own, and the daemon refuses an export without the token of a running clone.
@@ -22,6 +22,28 @@ usage     1.2k in  842 out  61.4k cache  $0.0415
 ```
 
 `/clear` in Claude Code starts a new session of the same clone, and `cy clones` adds the sessions up.
+
+## Tool calls
+
+```text frame="terminal" title="cy usage tools --since 1d"
+tool                calls  avg result  errors  retries  denials
+Read(README.md)         2     750 tok       0        0        0
+Bash(gh api …)          2     300 tok       1        1        0
+Bash(cargo test …)      1     200 tok       0        0        0
+Bash(rm …)              1           -       0        0        1
+```
+
+A row is a tool and what its calls were about. For `Bash` that is the program and its first argument, unless that is an option or a path, after `NAME=value` words and a leading `cd <dir> &&`. For `Read`, `Write`, `Edit` and `NotebookEdit` it is the file's path in the clone's checkout, so the same file in two clones is one row. Other tools have a row of their own, and so does a call whose hook event never reached the daemon. The rows whose results took the most bytes in total come first.
+
+| Column | What it counts |
+| --- | --- |
+| `calls` | the calls, the denied ones included |
+| `avg result` | the size of their results in tokens, as bytes / 4, or `-` when no call reported one |
+| `errors` | the calls that ran and failed |
+| `retries` | the calls whose previous call of the same row in their session failed |
+| `denials` | the calls that the clone's permissions refused |
+
+`--since` takes `30m`, `12h` or `7d`, 7 days by default, and `--project` counts only the clones of one project.
 
 ## What the daemon keeps
 
